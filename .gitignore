@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.e2e-out/
+*.log
+.DS_Store
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/app/src/main/assets/www/
+*.apk
+*.aab
+*.keystore
+!android/debug.keystore
+.cxx/
