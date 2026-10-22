@@ -15,3 +15,5 @@ android/app/src/main/assets/www/
 *.keystore
 !android/debug.keystore
 .cxx/
+.claude/worktrees/
+.claude/

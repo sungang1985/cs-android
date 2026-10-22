@@ -15,7 +15,7 @@
     "check": "npm run typecheck && npm run lint && npm run test && npm run build && npm run size && npm run e2e",
     "lint": "vitest run --project pure tests/unit/architecture.test.ts",
     "test:dom": "vitest run --project dom",
-    "bench": "vitest bench --run tests/bench",
+    "bench": "vitest bench --run --project pure tests/bench",
     "size": "node tools/size.mjs",
     "golden:update": "GOLDEN_UPDATE=1 vitest run --project pure tests/unit/sim/golden.test.ts"
   },
