@@ -304,4 +304,136 @@ export interface MapSource {
 
 Compiler assertions (tests): every row is 24 glyphs; every `T`/`C` count is 5; every cell in a platform rect is one of `^ A c X # =`-compatible glyphs; each ramp's `from` neighbour floor equals `from` and `to` neighbour equals `to`; every spawn sub-cell is walkable; BFS over the walk grid reaches both sites and the enemy spawn from each spawn; no two solids overlap; all solids lie inside bounds.
 
+---
+
+## 4. Weapons
+
+### 4.1 Weapon table (metres, seconds, degrees; real CS names)
+
+`Speed` = max move speed holding the weapon. `Spread` = cone half-angle (°) of the first shot: standing / moving at max speed / crouched. `Per-shot` = inaccuracy added per unit of heat (°); `Recover` = heat lost per second. `Falloff` = damage multiplier per 10 m. `AP` = armor penetration. `Pen` = may continue through penetrable props (factor).
+
+| id | Name | Type | Price | Dmg body / head | RPM | Mag / reserve | Reload | Spread stand / move / crouch | Per-shot / recover | Pattern | Speed | Falloff | AP | Pen | Kill $ |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `knife` | 匕首 Knife | melee | — | slash 40 / stab 65 (backstab stab ×3 = 195) | slash 120 (0.5 s) / stab 60 (1.0 s) | — | — | — | — | — | 5.0 | — | 0.85 | — | 1,500 |
+| `glock` | Glock-18 | pistol, semi | 200 (T default) | 30 / 120 | 400 | 20 / 120 | 2.2 | 1.2 / 4.0 / 0.85 | 0.35 / 10 | `P_pistol` | 4.8 | 0.90 | 0.47 | no | 300 |
+| `usp` | USP-S | pistol, semi | 200 (CT default) | 35 / 140 | 350 | 12 / 24 | 2.2 | 0.9 / 3.5 / 0.65 | 0.35 / 10 | `P_pistol` | 4.8 | 0.91 | 0.50 | no | 300 |
+| `deagle` | 沙漠之鹰 Desert Eagle | pistol, semi | 700 | 53 / 212 | 267 | 7 / 35 | 2.2 | 1.0 / 5.0 / 0.7 | 2.5 / 5 | `P_deagle` | 4.6 | 0.87 | 0.93 | ×0.5 | 300 |
+| `mp5` | MP5-SD | SMG, auto | 1,500 | 27 / 108 | 750 | 30 / 120 | 2.6 | 1.0 / 2.0 / 0.7 | 0.25 / 9 | `P_smg` | 4.7 | 0.85 | 0.62 | no | 600 |
+| `ak47` | AK-47 | rifle, auto (T) | 2,700 | 36 / 144 | 600 | 30 / 90 | 2.5 | 0.8 / 5.5 / 0.55 | 0.45 / 6 | `P_ak` | 4.3 | 0.98 | 0.77 | ×0.6 | 300 |
+| `m4a4` | M4A4 | rifle, auto (CT) | 3,100 | 33 / 132 | 666 | 30 / 90 | 3.1 | 0.6 / 5.0 / 0.45 | 0.35 / 7 | `P_m4` | 4.4 | 0.97 | 0.70 | ×0.6 | 300 |
+| `awp` | AWP | sniper, bolt | 4,750 | 115 / 460 (legs 85 fixed) | 41 (1.46 s bolt) | 5 / 30 | 3.6 | unscoped 8.0 / 12 / 7; scoped 0.05 / 6.0 / 0.04 | 0 / — | `P_awp` | 4.0 (3.3 scoped) | 0.99 | 0.97 | ×0.6; through `X` ×0.4 | 100 |
+| `he` | 高爆手雷 HE Grenade | throwable | 300 (max 1) | 98 at 0 m → 0 at 3.5 m, linear | 1 throw / s | 1 | — | — | — | — | 4.9 | — | 0.50 | — | 300 |
+| `flash` | 闪光弹 Flashbang | throwable | 200 (max 2) | 0; blind ≤ 3.0 s | 1 throw / s | 1 each | — | — | — | — | 4.9 | — | — | — | — |
+
+Gear: `kevlar` $650 (armor → 100), `kevlar_helmet` $1,000 (armor → 100 + helmet), **helmet upgrade $350** when armor > 0 and no helmet; rebuying Kevlar with armor < 100 costs $650 and refills. `defuse_kit` $400 (CT only, 1). `c4`: T objective item. Rifles are team-locked in the buy menu (`teams: ['T']` / `['CT']`); dropped rifles can be picked up by anyone.
+
+**Hit zones:** head ×4.0, chest ×1.0, stomach ×1.25, legs ×0.75 (AWP legs = 85 fixed, no armor). Armor applies to chest/stomach always, to head only with helmet, never to legs.
+
+```
+d        = round(base · falloff^(dist / 10) · zoneMult)
+if armored(zone): armorDmg = d · (1 − AP) · 0.5;  d = round(d · AP);  armor = max(0, armor − ceil(armorDmg));  if armor == 0: helmet = false
+```
+AK head with helmet at 10 m: 144 × 0.98 × 0.77 = 108.6 → kill. AK body at 30 m: 36 × 0.98³ = 33.9 → 34. Deagle head with helmet: 212 × 0.93 = 197 → kill.
+
+**Penetration:** at most one. If the first hit is a `penetrable` solid whose thickness along the ray ≤ 1.2 m and the weapon has a `Pen` factor, the ray continues from the exit point with `d × Pen`. Walls `#`, lips `L`, lintels, platform slabs and ramp steps stop everything; tall crates `X` stop everything except the AWP (×0.4).
+
+**Timings:** weapon switch 0.5 s (to knife 0.25 s); deploy after purchase 1.0 s; reload is cancelled by switching and completes only at its end (no partial); AWP: 1.46 s bolt, auto re-scope after bolt (setting "开镜保持", default on), zoom 75° → 20° → 10° → unscoped; scoped sensitivity scales by `fov / 75`.
+
+### 4.2 Spread (inaccuracy) model — `weapons/fire.ts`, pure
+
+```
+σ_pose = speed < 0.3 ? (crouched ? σ_crouch : σ_stand) : lerp(σ_stand, σ_move, clamp(speed / maxSpeed, 0, 1))
+θ      = σ_pose · (1 + 3.0 · airborne) + perShot · heat                // cone half-angle, degrees
+heat  += 1 per shot;  heat = max(0, heat − recover · DT) per tick
+```
+Shot direction = `dir(look.yaw + aimOffset.yaw, look.pitch + aimOffset.pitch)` rotated by a random offset uniform over the disc: `ρ = θ · sqrt(u1)`, `φ = 2π · u2`, `u1, u2` from stream **`spread`**. AWP uses `σ_scoped` when scoped; unscoped AWP is deliberately 8°.
+
+### 4.3 Recoil model ("aim punch shown at half strength") — `weapons/fire.ts`
+
+Each weapon has a pattern `P[i] = (pitch_i, yaw_i)` in degrees for shot index `i`. On every shot:
+
+- `shotIndex` (float) increments by 1; while not firing it decays `shotIndex = max(0, shotIndex − recoveryRate · DT)` with `recoveryRate` = AK 6/s, M4 7/s, MP5 9/s, pistols 10/s; the pattern index is `min(floor(shotIndex), P.length − 1)`.
+- **Aim offset** (where bullets go): `aimOffset += P[i] · (1 + N(0, 0.08))` (stream `fire`), then every tick `aimOffset *= exp(−DT / 0.45)`; clamped to pitch ≤ 12°, |yaw| ≤ 6°. With τ = 0.45 s an AK spray (0.1 s between shots) loses only 20 % per shot, so the steady-state climb is ≈ 9°: the player **must** drag down to keep hitting.
+- **Camera** = `look + 0.5 · aimOffset` (the view kick is half the aim punch; no separate state). The crosshair is drawn at the projection of `look + aimOffset`, i.e. it visibly climbs on screen during a spray and the player pulls `look.pitch` down to bring it back ("动态准星 / recoil crosshair", default on; off = fixed centre crosshair, CS-purist).
+- `look` is the player's own absolute view angles from `InputCommand`; recoil never modifies `look`, so the input layer and the sim never fight over it.
+- Mobile tuning: patterns are CS-shaped scaled to **60 %** amplitude (already applied below).
+
+Patterns (`weapons/patterns.ts`; pitch up positive, yaw right positive; tests assert length 30 for autos and monotone non-decreasing pitch for shots 0–7):
+
+| Pattern | pitch[0..29] | yaw[0..29] |
+|---|---|---|
+| `P_ak` | 0.4 0.9 1.3 1.6 1.8 1.9 2.0 2.0 2.1 2.1 2.0 2.0 2.0 2.0 2.0 1.9 1.9 1.9 1.9 1.9 then 1.8 ×10 | 0 0.05 −0.1 −0.2 −0.3 −0.6 −0.8 −1.0 −1.1 −1.2 −1.0 −0.5 0 0.4 0.8 1.0 0.9 0.7 0.5 0.4 then +0.6/−0.6 alternating ×10 |
+| `P_m4` | 0.3 0.7 1.0 1.3 1.5 then 1.6 ×10 then 1.5 ×5 then 1.4 ×10 | 0 0.05 0.1 0.15 0.2 0.4 0.55 0.7 0.8 0.9 0.8 0.5 0.2 −0.2 −0.6 −0.8 −0.7 −0.5 −0.3 −0.2 then +0.4/−0.4 alternating ×10 |
+| `P_smg` | 0.2 0.4 0.6 0.8 0.9 then 1.0 ×25 | 0 0 0.1 0.1 −0.1 then +0.3/−0.3 alternating ×25 |
+| `P_pistol` | [1.2] (length 1; index never grows) | [0] |
+| `P_deagle` | [3.0, 3.0] | [+0.3, −0.3] |
+| `P_awp` | [6.0] | [0] |
+
+### 4.4 Firing, hit detection, melee, grenades
+
+- **Trigger:** semi-auto fires once per press edge (the input layer latches a sub-tick tap into one `FIRE` tick); auto fires every `60 / RPM` s while held; `AWP`: shot → 1.46 s bolt → re-scope. Dry fire emits `dryFire`. Auto-reload (setting, default on): when the magazine is empty and no enemy has been visible for 0.8 s.
+- **Hitscan** (`weapons/hitscan.ts`): ray from eye along the shot direction, max 200 m, against (a) `StaticWorld.raycastAll` and (b) every alive enemy's hitboxes in the victim's yaw-local frame: head sphere r 0.16 at feet + 1.60 (crouched 1.10); torso box 0.5 × 0.6 × 0.3 at y 0.9–1.5 (chest = upper 55 %, stomach = lower 45 %); legs box 0.5 × 0.9 × 0.3 at y 0–0.9. Crouched: torso y 0.6–1.1, legs 0–0.6. Nearest `t` wins; teammates are skipped (friendly fire off). Emits `shot`, `hit`, `impact`, `nearMiss` (ray passes < 1.5 m from a player's head).
+- **Knife:** sphere-cast r 0.3 m, reach 1.2 m, 60° cone; backstab when the angle between the victim's forward and attacker→victim is < 60°.
+- **Grenades** (`weapons/grenade.ts`): sphere r 0.07; release speed 12 m/s (or **7 m/s "short toss"** when the throw button was held < 300 ms… see §7.2: tap = full throw, hold = short toss) at +10° above aim; gravity 20 m/s²; swept-sphere vs solids, restitution 0.45, friction 0.7, sub-stepped ×4 when speed > 10 m/s; players ignored. HE fuse 2.0 s, flash 1.5 s, both from release. Trajectory preview dots (render-only) while the throw button is held.
+- **HE damage:** `98 · max(0, 1 − dist / 3.5)` to every enemy whose chest **or** head has LOS from the burst centre; armor rule with AP 0.5; thrower cannot hurt teammates or self? — self-damage **on** (CS rule), teammates **off**.
+- **Flash:** for each player (both teams) within 20 m with LOS: `blind = 3.0 · clamp(cos α, 0, 1)^0.7 · clamp(1 − dist / 20, 0.25, 1)` s (α = angle between view direction and direction to the flash). Human: white overlay alpha 1 → 0 over `blind` plus a 3.5 kHz ring; bots: perception disabled, 50 % spray toward the last known target direction.
+- **World items** (`items[]`): death drops the primary weapon (and C4); a `drop` button (pause menu, desktop G) drops the active primary. Auto-pickup fills an empty matching slot when walking over an item; otherwise the Use pill reads 「拾取 / Pick up」 and swaps. Bots pick up a better gun within 6 m of their path and always retrieve a dropped bomb (§6.8).
+
+---
+
+## 5. Economy (Defusal only; TDM and Training are free)
+
+| Item | Value |
+|---|---|
+| Starting money (match start and side swap) | $800 |
+| Max money | $16,000 |
+| Round win: elimination / time | $3,250 to each winner |
+| Round win: bomb exploded / defused | $3,500 to each winner |
+| Loss bonus ladder (team loss streak 1 … 5+) | $1,400 / $1,900 / $2,400 / $2,900 / $3,400 |
+| Loss streak update | on a loss `streak += 1`; on a win `streak = max(0, streak − 1)` (CS "half-step" rule); both reset to 0 at the half |
+| T lose after planting | **+ $800 to every T** (on top of the loss bonus) |
+| Plant | **+ $300 to the planter**, paid immediately on plant |
+| Defuse | + $300 to the defuser, paid immediately |
+| Kill reward | by weapon (§4.1): knife $1,500 · pistols $300 · MP5 $600 · AK/M4 $300 · AWP $100 · HE $300 |
+| Ts alive when the timer expires (CT `time` win) | those Ts receive **$0** loss bonus (CS anti-camping rule) |
+| Suicide / fall death | no change |
+| Sudden death | money untouched, no buying |
+| Buy window | FREEZE 5 s + first 10 s of LIVE = **15 s**, inside own spawn area only |
+| Sell / refund | none |
+
+Money is applied by `rules/economy.ts` in exactly two places: immediately for plant/defuse/kill, and once on entering `ROUND_END` for win/loss (`awardRoundEnd` returns a `MoneyDelta[]` that the HUD lists). All amounts clamp at $16,000.
+
+### 5.1 Buy menu structure (one screen, no sub-menus; layout in §8.4)
+
+| 手枪 Pistols | 冲锋枪 & 步枪 SMG & Rifles | 狙击 & 装备 Sniper & Gear | 投掷物 Grenades |
+|---|---|---|---|
+| Glock / USP ($200, team), Deagle $700 | MP5-SD $1,500; AK-47 $2,700 (T) / M4A4 $3,100 (CT) | AWP $4,750; Kevlar $650; Kevlar+Helmet $1,000 (upgrade $350); 拆弹器 Defuse kit $400 (CT) | HE $300 (max 1); Flash $200 (max 2) |
+
+Quick-buy row (top of the menu, large tiles with price and 「可负担 / 钱不够」 state):
+
+| Preset | Contents | Price (T / CT) |
+|---|---|---|
+| 「全装 / Full」 | team rifle + Kevlar+Helmet + HE + Flash (+ kit for CT if affordable) | $4,200 / $4,600 (+400) |
+| 「半甲 / Force」 | Kevlar + Deagle | $1,350 |
+| 「狙击 / AWP」 | AWP + Kevlar+Helmet | $5,750 |
+| 「自动 / Auto」 | result of `buyPlan()` below | varies |
+| 「重买 / Rebuy」 | last round's purchases, in order, skipping what is already owned | varies |
+
+A preset buys its items in order and stops at the first unaffordable one. Setting 「自动购买 / Auto-buy」 (default off) runs `buyPlan()` at FREEZE start so a player never has to open the menu.
+
+### 5.2 Shared buy planner (`rules/buyPlan.ts`, used by bots and by 「自动」)
+
+```
+buyPlan(money, team, owned, prefs, teamLossStreak, teamHasAwp, isLastRoundOfHalf): ItemId[]
+  rifle = team == 'T' ? 'ak47' : 'm4a4'
+  if prefs.sniper && !teamHasAwp && money ≥ 5750           → [awp, kevlar_helmet] + he if ≥ +300 + flash if ≥ +200
+  elif money ≥ price(rifle) + 1000                        → [rifle, kevlar_helmet] + he if ≥ +300 + flash if ≥ +200 + kit (CT) if ≥ +400
+  elif money ≥ 2500                                       → [mp5, kevlar_helmet]
+  elif money ≥ 1350                                       → [deagle, kevlar]
+  elif money ≥ 650 && (teamLossStreak ≥ 2 || isLastRoundOfHalf) → [kevlar]
+  else                                                    → []            // eco
+Items already owned are skipped; helmet is bought as the $350 upgrade when Kevlar is owned.
+```
+Bots add a team-coordinated eco (§6.7): if the team's average money < $2,000 and no one can afford a rifle, all bots of that team buy nothing and keep their pistols.
+
 <!-- CONTINUE -->
