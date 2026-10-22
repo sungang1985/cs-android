@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": [
+      "ES2022"
+    ],
+    "types": []
+  },
+  "include": [
+    "src/core/**/*.ts",
+    "src/settings/**/*.ts",
+    "src/sim/**/*.ts",
+    "src/world/**/*.ts",
+    "src/maps/**/*.ts",
+    "src/nav/**/*.ts",
+    "src/weapons/**/*.ts",
+    "src/rules/**/*.ts",
+    "src/ai/**/*.ts",
+    "src/i18n/**/*.ts"
+  ],
+  "exclude": [
+    "src/core/loop.ts"
+  ]
+}

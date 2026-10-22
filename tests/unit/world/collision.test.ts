@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { StaticWorld, type Solid } from '@/sim/world/collision';
+import { StaticWorld, type Solid } from '@/world/collision';
 import { aabb, v3, v3norm } from '@/core/math';
 
 const PLAYER = { halfWidth: 0.3, height: 1.8, stepHeight: 0.5 };

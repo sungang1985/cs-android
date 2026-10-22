@@ -7,22 +7,32 @@
   "scripts": {
     "build": "node tools/build.mjs",
     "dev": "node tools/build.mjs --watch --serve",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.sim.json",
     "test": "vitest run",
     "e2e": "node tools/e2e.mjs",
     "build:android": "node tools/build.mjs && node tools/sync-android.mjs",
     "build:apk": "bash tools/apk/build-apk.sh",
-    "check": "npm run typecheck && npm run test && npm run build && npm run e2e"
+    "check": "npm run typecheck && npm run lint && npm run test && npm run build && npm run size && npm run e2e",
+    "lint": "vitest run --project pure tests/unit/architecture.test.ts",
+    "test:dom": "vitest run --project dom",
+    "bench": "vitest bench --run tests/bench",
+    "size": "node tools/size.mjs",
+    "golden:update": "GOLDEN_UPDATE=1 vitest run --project pure tests/unit/sim/golden.test.ts"
   },
   "license": "MIT",
   "dependencies": {
     "three": "^0.186.1"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@types/three": "^0.186.0",
     "esbuild": "^0.28.2",
+    "jsdom": "^26.1.0",
     "playwright": "^1.56.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.5"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

@@ -6,7 +6,7 @@
  * Bodies (players) are AABBs positioned by their feet centre: box = [x-hw, y, z-hw] .. [x+hw, y+h, z+hw].
  * Ramps and stairs are authored as stacks of thin boxes; the step-up logic climbs them.
  */
-import { Aabb, Vec3, v3, v3copy, aabbOverlap, rayAabb } from '../../core/math';
+import { Aabb, Vec3, v3, v3copy, aabbOverlap, rayAabb } from '../core/math';
 
 export type SurfaceId = 'concrete' | 'sand' | 'wood' | 'metal' | 'brick' | 'ground' | 'glass' | 'plaster';
 
@@ -19,6 +19,10 @@ export interface Solid {
   penetrable: boolean;
   /** Optional authoring tag (e.g. "crate", "wall", "stairs") for the renderer/tools. */
   tag?: string;
+  /** Damage multiplier when a bullet passes through (0.6 crates/sandbags, 0.4 tall crates for the AWP); undefined = 0. */
+  penetrationFactor?: number;
+  /** Authoring kind (see world/types.ts SolidKind). */
+  kind?: string;
 }
 
 export interface RayHit {

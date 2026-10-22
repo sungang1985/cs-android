@@ -5,7 +5,8 @@
  *   consistent batch after N sim ticks.
  * - `on` listeners are called immediately on emit (used by the app side; sim modules only emit).
  */
-export type EventMap = Record<string, unknown>;
+/** Any object type whose keys are event names and values the payload types. */
+export type EventMap = object;
 
 export interface EventEnvelope<E extends EventMap, K extends keyof E = keyof E> { type: K; data: E[K]; tick: number }
 

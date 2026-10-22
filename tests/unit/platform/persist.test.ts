@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { persist, setStorageForTests } from '@/app/persist';
+import { persist, setStorageForTests } from '@/platform/persist';
 
 function memStorage() {
   const m = new Map<string, string>();

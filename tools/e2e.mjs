@@ -39,7 +39,7 @@ for (const file of files) {
   const logs = [];
   const context = await browser.newContext(desktop
     ? { viewport: { width: 1280, height: 720 }, hasTouch: false }
-    : { ...devices['Pixel 5 landscape'] });
+    : { ...devices['Pixel 5 landscape'], locale: 'zh-CN' });
   const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => {

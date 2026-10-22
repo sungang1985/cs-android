@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#1c1e22">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>弹壳 Shell</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="app.css?v=__BUILD_VERSION__">
+  <style>html,body{margin:0;background:#1c1e22;height:100%;overflow:hidden}#gl{position:fixed;inset:0;width:100%;height:100%;display:block}#ui{position:fixed;inset:0}#radar{position:absolute;right:2%;top:4%;width:24vh;height:24vh;pointer-events:none}</style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+  <div id="ui"><canvas id="radar" width="160" height="160"></canvas></div>
+  <script src="app.js?v=__BUILD_VERSION__"></script>
+</body>
+</html>

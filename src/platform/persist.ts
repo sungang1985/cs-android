@@ -2,7 +2,7 @@
  * Versioned localStorage wrapper. Every read is wrapped in try/catch with a default (private mode,
  * blocked storage, quota) and values are JSON. Keys are namespaced `cs.v1.<name>`.
  */
-export type PersistKey = 'settings' | 'layout' | 'stats' | 'onboarding' | 'match' | 'locale' | 'loadout';
+export type PersistKey = 'settings' | 'layout' | 'stats' | 'onboarding' | 'match' | 'locale' | 'loadout' | 'lastSettings';
 
 const PREFIX = 'cs.v1.';
 
