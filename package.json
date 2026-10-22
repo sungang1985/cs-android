@@ -11,6 +11,7 @@
     "test": "vitest run",
     "e2e": "node tools/e2e.mjs",
     "build:android": "node tools/build.mjs && node tools/sync-android.mjs",
+    "build:apk": "bash tools/apk/build-apk.sh",
     "check": "npm run typecheck && npm run test && npm run build && npm run e2e"
   },
   "license": "MIT",

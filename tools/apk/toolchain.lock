@@ -1,0 +1,15 @@
+# Toolchain for tools/apk/build-apk.sh. One artifact per line: <cached file name> <sha256> <source>
+# <source> is either an absolute URL or "maven:<path below a Maven Central root>" (tried on every
+# mirror in APK_MAVEN_MIRRORS). Checksums were verified against Maven Central's own .sha1/.sha256
+# files when this file was written.
+r8lib-8.5.35.jar 4733945987ee0a840fafc34080b135259e01678412e07212b23f706334290294 https://storage.googleapis.com/r8-releases/raw/8.5.35/r8lib.jar
+android-all-14-robolectric-10818077.jar 6be2218c6a53fe3c57bc22ebdc723edcb7270a8a6f187545708aa5c0ed813977 maven:org/robolectric/android-all/14-robolectric-10818077/android-all-14-robolectric-10818077.jar
+kotlin-compiler-embeddable-2.0.21.jar 9fa8cdd1de0dccffe154c997d423ec6b5f53cd6d9177e3a77a9b0de03fb1bc81 maven:org/jetbrains/kotlin/kotlin-compiler-embeddable/2.0.21/kotlin-compiler-embeddable-2.0.21.jar
+kotlin-stdlib-2.0.21.jar f31cc53f105a7e48c093683bbd5437561d1233920513774b470805641bedbc09 maven:org/jetbrains/kotlin/kotlin-stdlib/2.0.21/kotlin-stdlib-2.0.21.jar
+kotlin-script-runtime-2.0.21.jar 9c111f8d08ade455566272d561921adc2b2cb6b7a4ccee38d9829c5e3a1ca6a3 maven:org/jetbrains/kotlin/kotlin-script-runtime/2.0.21/kotlin-script-runtime-2.0.21.jar
+kotlin-reflect-1.6.10.jar 3277ac102ae17aad10a55abec75ff5696c8d109790396434b496e75087854203 maven:org/jetbrains/kotlin/kotlin-reflect/1.6.10/kotlin-reflect-1.6.10.jar
+kotlin-daemon-embeddable-2.0.21.jar b1a0a73c5022f8dd05a638c6b76b2bd7361818a1f3860ff2644133b1dd2bdb03 maven:org/jetbrains/kotlin/kotlin-daemon-embeddable/2.0.21/kotlin-daemon-embeddable-2.0.21.jar
+trove4j-1.0.20200330.jar c5fd725bffab51846bf3c77db1383c60aaaebfe1b7fe2f00d23fe1b7df0a439d maven:org/jetbrains/intellij/deps/trove4j/1.0.20200330/trove4j-1.0.20200330.jar
+kotlinx-coroutines-core-jvm-1.6.4.jar c24c8bb27bb320c4a93871501a7e5e0c61607638907b197aef675513d4c820be maven:org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.6.4/kotlinx-coroutines-core-jvm-1.6.4.jar
+annotations-13.0.jar ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478 maven:org/jetbrains/annotations/13.0/annotations-13.0.jar
+apksig-2.3.0.jar 9637078c0016244e4be0941836295365a7e2e5b164c59cb7885783c40460bfee maven:com/android/tools/build/apksig/2.3.0/apksig-2.3.0.jar
