@@ -28,6 +28,7 @@ import { MuzzleFlashes } from './effects/muzzle';
 import { Explosions } from './effects/explosions';
 import { ThrowPreview } from './effects/trajectory';
 import { explosionShake } from './viewmodelMath';
+import { chaseCam, KillcamLatch } from './spectateCam';
 
 export interface RendererStats { drawCalls: number; triangles: number; frameMs: number }
 export const FOG = { color: '#1c1e22', density: 0.018 } as const;
@@ -59,7 +60,7 @@ export class GameRenderer {
   private clock = 0;
   private readonly fx = new Rng(4242);
   private localId = 1;
-  private specId = -1;
+  private readonly killcam = new KillcamLatch();
   private markerPos: Vec3 | null = null;
   private readonly shotCount = new Map<number, number>();
   private readonly lastShotDir = new Map<number, Vec3>();
@@ -71,7 +72,7 @@ export class GameRenderer {
   setDrawingEnabled(b: boolean): void { this.drawingEnabled = b; }
   private menuSnap: RenderSnapshot | null = null;
   private dio: MapLike | null = null;
-  private readonly eye = new Vector3(); private readonly tgt = new Vector3();
+  private readonly eye = new Vector3(); private readonly tgt = new Vector3(); private readonly piv = new Vector3();
   private width = 1; private height = 1;
 
   constructor(private readonly canvas: HTMLCanvasElement, opts: { quality: QualityPreset; fov: number }) {
@@ -165,7 +166,9 @@ export class GameRenderer {
     const changed = resolveQuality(q) !== resolveQuality(this.quality);
     this.quality = q;
     if (!changed || !this.gl) return;
+    const dirs = this.w?.chars.deathDirs();
     this.teardownWorld(); this.buildWorld();
+    if (dirs) this.w?.chars.restoreDeathDirs(dirs);
   }
   setFov(deg: number): void { this.fov = deg; this.rig.setFov(deg); }
 
@@ -205,15 +208,16 @@ export class GameRenderer {
     if (me && me.team !== w.vmTeam) this.rebuildViewmodel(me.team);
     // camera mode (decided from ids first so the right model can be hidden)
     let mode: 'fp' | 'killcam' | 'spec' | 'deathcam' = 'fp';
+    const killerId = this.killcam.resolve(l.alive === 1, l.killerId, l.id);
     if (!l.alive) {
       const deathT = me ? me.deathT : -1;
-      if (deathT >= 0 && deathT < 1.8 && l.killerId > 0 && findPlayer(next, l.killerId)) mode = 'killcam';
+      if (deathT >= 0 && deathT < 1.8 && killerId > 0 && findPlayer(next, killerId)) mode = 'killcam';
       else if (l.spectating > 0 && findPlayer(next, l.spectating)) mode = 'spec';
       else mode = 'deathcam';
     }
     const specId = mode === 'spec' ? l.spectating : -1, localId = l.id;
-    this.specId = specId;
-    const hidden = (id: number) => (id === localId && (mode === 'fp' || mode === 'killcam')) || id === specId;
+    // the spectated teammate stays visible: the spectator view is a chase cam behind them (§2.2)
+    const hidden = (id: number) => id === localId && (mode === 'fp' || mode === 'killcam');
     w.shared.begin();
     w.chars.update(prev, next, alpha, { hidden, clock: this.clock, dt, showAll: false });
     w.props.update(prev, next, alpha, this.clock, dt);
@@ -227,7 +231,7 @@ export class GameRenderer {
       this.rig.update(dt, this.eye, camYaw, camPitch, l.scoped);
       this.aliveYaw = camYaw; this.alivePitch = camPitch;
     } else if (mode === 'killcam' && me) {
-      const mv = w.chars.views.get(localId), kv = w.chars.views.get(l.killerId)!;
+      const mv = w.chars.views.get(localId), kv = w.chars.views.get(killerId)!;
       const f = smoothstep(0, 0.35, me.deathT);
       const base = mv ? mv.pos : this.eye.set(me.x, me.y, me.z);
       this.eye.set(base.x, base.y + BODY.standEye - 0.9 * f, base.z);
@@ -238,9 +242,10 @@ export class GameRenderer {
       this.rig.update(dt, this.eye, camYaw, camPitch, 0);
     } else if (mode === 'spec') {
       const sv = w.chars.views.get(specId)!;
-      this.eye.set(sv.pos.x, sv.pos.y + BODY.standEye - (BODY.standEye - BODY.crouchEye) * sv.crouchF, sv.pos.z);
-      camYaw = sv.yaw; camPitch = sv.pitch;
-      this.rig.update(dt, this.eye, camYaw, camPitch, 0);
+      this.piv.set(sv.pos.x, sv.pos.y + BODY.standEye - (BODY.standEye - BODY.crouchEye) * sv.crouchF, sv.pos.z);
+      chaseCam(this.piv, sv.yaw, sv.pitch, this.solidBoxes, this.eye, this.tgt);
+      this.rig.lookAt(this.eye, this.tgt, dt);
+      camYaw = sv.yaw;
     } else {
       const mv = w.chars.views.get(localId);
       const c = mv ? mv.pos : this.tgt.set(l.x, l.eyeY - BODY.standEye, l.z);
@@ -305,8 +310,8 @@ export class GameRenderer {
           const p = w.vm.muzzleWorld(this.rig.camera, this.tgt); if (p) origin = v3(p.x, p.y, p.z);
         } else {
           const v = w.chars.views.get(d.shooter);
-          // no world flash for a model the camera sits in (scoped human, spectated player)
-          if (v && v.alive) { origin = v3(v.muzzle.x, v.muzzle.y, v.muzzle.z); if (d.weapon !== 'usp' && d.weapon !== 'mp5' && d.shooter !== me && d.shooter !== this.specId) w.flashes.add(origin, d.dir, this.fx); }
+          // no world flash for the model the camera sits in (scoped human)
+          if (v && v.alive) { origin = v3(v.muzzle.x, v.muzzle.y, v.muzzle.z); if (d.weapon !== 'usp' && d.weapon !== 'mp5' && d.shooter !== me) w.flashes.add(origin, d.dir, this.fx); }
         }
         if (d.weapon === 'awp' || n % 2 === 0) w.tracers.add(origin, d.end);
         if (w.muzzleLight && d.weapon !== 'usp' && d.weapon !== 'mp5') { w.muzzleLight.position.set(origin.x, origin.y, origin.z); w.muzzleLight.intensity = 4 * LIGHT.scale; w.muzzleLightFrames = 1; }
@@ -328,7 +333,7 @@ export class GameRenderer {
         break;
       }
       case 'damageTaken': { const d = e.data as SimEvents['damageTaken']; if (d.victim === me) this.rig.shake.add(0.4 * DEG, 0.1); break; }
-      case 'death': { const d = e.data as SimEvents['death']; w.chars.onDeath(d.victim, d.dir); break; }
+      case 'death': { const d = e.data as SimEvents['death']; w.chars.onDeath(d.victim, d.dir); this.killcam.onDeath(d.victim, d.killer, me); break; }
       case 'land': { const d = e.data as SimEvents['land']; if (d.player === me) w.vm.motion.onLand(d.impact); break; }
       case 'weaponSwitch': { const d = e.data as SimEvents['weaponSwitch']; if (d.player === me) w.vm.setWeapon(WEAPON_INDEX.indexOf(d.weapon)); break; }
       case 'knife': { const d = e.data as SimEvents['knife']; if (d.player === me) w.vm.motion.onKnife(d.stab); break; }

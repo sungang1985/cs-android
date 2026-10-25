@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const dir = fileURLToPath(new URL('../../../src/render', import.meta.url));
-const PURE = ['textures/ctx.ts', 'textures/paint.ts', 'textures/index.ts', 'textures/sprites.ts', 'textures/icons.ts', 'viewmodelMath.ts', 'mapGeometry.ts', 'quality.ts', 'radar.ts'];
+const PURE = ['textures/ctx.ts', 'textures/paint.ts', 'textures/index.ts', 'textures/sprites.ts', 'textures/icons.ts', 'viewmodelMath.ts', 'mapGeometry.ts', 'quality.ts', 'radar.ts', 'spectateCam.ts'];
 
 describe('render purity', () => {
   for (const f of PURE) it(`${f} imports no three`, () => {
