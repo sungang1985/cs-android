@@ -40,7 +40,8 @@ export function createMatch(cfg: MatchConfig, map: CompiledMap, profiles: BotPro
     teams: { T: emptyBlackboard(), CT: emptyBlackboard() },
     bots: [], humanId: 1, pendingDeaths: [],
   };
-  const human: Team = cfg.humanTeam, enemy = enemyTeam(human);
+  const human: Team = cfg.mode === 'training' ? 'T' : cfg.humanTeam; // the training region exists only on the T side
+  const enemy = enemyTeam(human);
   const n = cfg.mode === 'training' ? 1 : cfg.teamSize;
   const money = mode.startMoney;
   const mk = (team: Team, isBot: boolean, nameKey: string, slot: number, profile?: BotProfile): PlayerState => {

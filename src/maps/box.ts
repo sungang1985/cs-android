@@ -17,10 +17,10 @@ export const BOX: MapSource = {
   ],
   wallHeight: 3.0, ceilingY: 4.5, lintelY: 2.6,
   props: {
-    X: { height: 2.0, inset: 0, material: 'crate_wood', surface: 'wood', penetrable: true, penetrationFactor: 0.4, blocksLos: 'full' },
-    c: { height: 1.0, inset: 0.5, material: 'crate_wood', surface: 'wood', penetrable: true, penetrationFactor: 0.6, blocksLos: 'low' },
-    '~': { height: 1.2, inset: 0, material: 'sandbag', surface: 'sand', penetrable: true, penetrationFactor: 0.6, blocksLos: 'low' },
-    L: { height: 1.9, inset: 0, material: 'metal', surface: 'metal', penetrable: false, penetrationFactor: 0, blocksLos: 'low' },
+    X: { height: 2.0, inset: 0, material: 'crate_wood', surface: 'wood', penetrable: true, penetrationFactor: 0.4, kind: 'tallcrate', blocksLos: 'full' },
+    c: { height: 1.0, inset: 0.5, material: 'crate_wood', surface: 'wood', penetrable: true, penetrationFactor: 0.6, kind: 'lowcrate', blocksLos: 'low' },
+    '~': { height: 1.2, inset: 0, material: 'sandbag', surface: 'sand', penetrable: true, penetrationFactor: 0.6, kind: 'sandbag', blocksLos: 'low' },
+    L: { height: 1.9, inset: 0, material: 'metal', surface: 'metal', penetrable: false, penetrationFactor: 0, kind: 'lip', blocksLos: 'low' },
   },
   platforms: [],
   ramps: [],
@@ -37,5 +37,5 @@ export const BOX: MapSource = {
   holdSpots: [{ id: 'hold_mid', cell: [2, 3], yawDeg: 0, team: 'both', crouch: false }],
   chokes: [],
   materials: { wall: 'concrete', wallBase: 'concrete_base', floor: 'floor', site: 'floor_stripe', ceiling: 'ceiling', door: 'door_frame' },
-  training: { sealed: [], targets: [[4, 1], [4, 2], [3, 1]], onboardingCell: [3, 2] },
+  training: { sealed: [], targets: [[4, 1], [4, 2], [3, 1]], onboardingCell: [2, 3] },
 };

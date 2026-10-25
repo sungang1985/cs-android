@@ -8,7 +8,7 @@ export const DEFAULT_MATCH: Omit<MatchConfig, 'seed' | 'options'> = { mode: 'def
 export function buildMatchConfig(partial: Partial<MatchConfig> & { humanTeam?: Team | 'random' }, settings: Settings, seed: number, rngPick: () => number): MatchConfig {
   const last = persist.get<Partial<MatchConfig> | null>('lastSettings', null) ?? {};
   const base = { ...DEFAULT_MATCH, ...last, ...partial };
-  const humanTeam: Team = (base.humanTeam as Team | 'random') === 'random' ? (rngPick() < 0.5 ? 'T' : 'CT') : (base.humanTeam as Team);
+  const humanTeam: Team = base.mode === 'training' ? 'T' : (base.humanTeam as Team | 'random') === 'random' ? (rngPick() < 0.5 ? 'T' : 'CT') : (base.humanTeam as Team);
   const cfg: MatchConfig = {
     mode: base.mode, seed: partial.seed ?? seed, humanTeam, difficulty: base.difficulty, teamSize: base.teamSize, roundsToWin: base.roundsToWin,
     tdmSeconds: base.tdmSeconds, tdmKills: base.tdmKills, mapId: 'depot',

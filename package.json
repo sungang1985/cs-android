@@ -17,7 +17,8 @@
     "test:dom": "vitest run --project dom",
     "bench": "vitest bench --run --project pure tests/bench",
     "size": "node tools/size.mjs",
-    "golden:update": "GOLDEN_UPDATE=1 vitest run --project pure tests/unit/sim/golden.test.ts"
+    "golden:update": "GOLDEN_UPDATE=1 vitest run --project pure tests/unit/sim/golden.test.ts",
+    "nav:dump": "node tools/nav-dump.mjs"
   },
   "license": "MIT",
   "dependencies": {

@@ -30,10 +30,10 @@ export const DEPOT: MapSource = {
   ],
   wallHeight: 3.0, ceilingY: 4.5, lintelY: 2.6,
   props: {
-    X: { height: 2.0, inset: 0, material: 'crate_wood', surface: 'wood', penetrable: true, penetrationFactor: 0.4, blocksLos: 'full' },
-    c: { height: 1.0, inset: 0.5, material: 'crate_wood', surface: 'wood', penetrable: true, penetrationFactor: 0.6, blocksLos: 'low' },
-    '~': { height: 1.2, inset: 0, material: 'sandbag', surface: 'sand', penetrable: true, penetrationFactor: 0.6, blocksLos: 'low' },
-    L: { height: 1.9, inset: 0, material: 'metal', surface: 'metal', penetrable: false, penetrationFactor: 0, blocksLos: 'low' },
+    X: { height: 2.0, inset: 0, material: 'crate_wood', surface: 'wood', penetrable: true, penetrationFactor: 0.4, kind: 'tallcrate', blocksLos: 'full' },
+    c: { height: 1.0, inset: 0.5, material: 'crate_wood', surface: 'wood', penetrable: true, penetrationFactor: 0.6, kind: 'lowcrate', blocksLos: 'low' },
+    '~': { height: 1.2, inset: 0, material: 'sandbag', surface: 'sand', penetrable: true, penetrationFactor: 0.6, kind: 'sandbag', blocksLos: 'low' },
+    L: { height: 1.9, inset: 0, material: 'metal', surface: 'metal', penetrable: false, penetrationFactor: 0, kind: 'lip', blocksLos: 'low' },
   },
   platforms: [{ rect: [18, 1, 22, 4], y: 1.5, material: 'metal', surface: 'metal' }],
   ramps: [
@@ -88,8 +88,10 @@ export const DEPOT: MapSource = {
   ],
   materials: { wall: 'concrete', wallBase: 'concrete_base', floor: 'floor', site: 'floor_stripe', ceiling: 'ceiling', door: 'door_frame' },
   training: {
-    // Training range: T spawn + north room + Long only; everything else sealed with invisible solids (§2.4)
-    sealed: [[4, 4, 4, 4], [11, 4, 11, 4], [7, 15, 7, 15], [4, 8, 4, 9], [17, 2, 17, 2], [14, 4, 16, 4]],
+    // Training range (§2.4): T spawn + North Room + Long only. The open region is T spawn → (4,4) → North Room →
+    // long door (7,2) → Long; every other exit is sealed with an invisible solid: T spawn ↔ South Room (4,13),
+    // mid doors (4,8..9), mid window (11,4), A connector (15..16,4) and the A ramp (17,2).
+    sealed: [[4, 13, 4, 13], [4, 8, 4, 9], [11, 4, 11, 4], [15, 4, 16, 4], [17, 2, 17, 2]],
     targets: [[9, 1], [11, 2], [13, 1], [15, 3], [16, 1], [10, 3], [14, 2], [12, 1]],
     onboardingCell: [5, 2],
   },

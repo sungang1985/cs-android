@@ -44,7 +44,7 @@ export function player(id: number, team: Team, pos: Vec3, yaw = 0, isBot = id !=
 export function openWorld(solids: Array<Omit<Solid, 'id'>> = []): StaticWorld {
   return new StaticWorld(solids, { groundY: 0, bounds: aabb(-100, -1, -100, 100, 20, 100) });
 }
-export function solid(box: ReturnType<typeof aabb>, kind: string, penetrable = false, penetrationFactor = 0, surface: Solid['surface'] = 'wood'): Omit<Solid, 'id'> {
+export function solid(box: ReturnType<typeof aabb>, kind: Solid['kind'], penetrable = false, penetrationFactor = 0, surface: Solid['surface'] = 'wood'): Omit<Solid, 'id'> {
   return { box, kind, penetrable, penetrationFactor, surface };
 }
 
