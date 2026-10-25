@@ -210,16 +210,16 @@ describe('rules/bomb — dropped bomb', () => {
     expect(ofType(h, 'sound').filter((s) => s.id === 'bomb_pickup')).toEqual([expect.objectContaining({ loudness: 5 })]);
   });
 
-  it('the human with auto-pickup off takes the dropped bomb only on a USE press', () => {
+  it('the human with auto-pickup off still takes the dropped bomb by walking over it (§2.2: objectives are always picked up)', () => {
     const h = harness({ options: { autoPickup: false, scopeHold: true } });
     stepTo(h, 400);
     giveBomb(h, 2);
     kill(h, 2, 3);
     const item = h.sim.state.items.find((i) => i.kind === 'bomb')!;
+    expect(h.sim.state.bomb.state).toBe('dropped');
     teleport(h.human(), item.pos.x, 0, item.pos.z);
     step(h, 5);
-    expect(h.sim.state.bomb.state).toBe('dropped');
-    step(h, 1, { buttons: Btn.USE });
+    expect(h.sim.state.bomb.state).toBe('carried');
     expect(h.sim.state.bomb.carrier).toBe(1);
   });
 

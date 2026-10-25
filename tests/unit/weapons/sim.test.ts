@@ -24,6 +24,8 @@ function weaponScript(t: number, rng: Rng, yaw: number): InputCommand {
   return c;
 }
 function arm(sim: Simulation): void {
+  // Round start (WARMUP → FREEZE on the first tick) resets loadouts, so hand out gear after it.
+  sim.step(cloneCommand(IDLE_COMMAND, sim.state.tick)); sim.events.drain();
   const h = sim.state.players[0];
   giveWeapon(h, 'ak47'); h.inv.he = 1; h.inv.flash = 2; h.armor = 100;
 }
