@@ -1,5 +1,6 @@
 /** Weapon and item data, DESIGN.md §4.1 and §5. Display names come from i18n ('weapon.<id>'). */
-import type { WeaponId, ItemId, Slot, Team } from '../sim/state';
+import { v3, type Vec3 } from '../core/math';
+import type { WeaponId, ItemId, Slot, Team, HitZone, PlayerState } from '../sim/state';
 import { WEAPON_INDEX } from '../sim/state';
 import { P_AK, P_M4, P_SMG, P_PISTOL, P_DEAGLE, P_AWP, P_NONE, type Pattern } from './patterns';
 
@@ -45,9 +46,37 @@ export const AWP_BOLT_SEC = 1.46;
 export const AWP_FOV = [75, 20, 10] as const;
 export const HE = { radius: 3.5, dmg: 98, fuseSec: 2.0, ap: 0.5 } as const;
 export const FLASH = { maxSec: 3.0, range: 20, fuseSec: 1.5 } as const;
+/** friction = tangential speed kept per bounce; restitution = normal speed kept (§4.4). */
 export const GRENADE = { speed: 12, shortSpeed: 7, shortHoldTicks: 18, radius: 0.07, gravity: 20, restitution: 0.45, friction: 0.7, pitchUp: 10 } as const;
 
 export function isPrimary(id: WeaponId): boolean { return WEAPONS[id].slot === 1; }
 export function isGrenade(id: WeaponId): boolean { return WEAPONS[id].slot === 4; }
 export function teamRifle(team: Team): WeaponId { return team === 'T' ? 'ak47' : 'm4a4'; }
 export function teamPistol(team: Team): WeaponId { return team === 'T' ? 'glock' : 'usp'; }
+
+/** Hitbox geometry (§4.4), metres above the feet, in the victim's yaw-local frame (x = right, z = back). */
+export const HITBOX = {
+  headRadius: 0.16, headY: 1.6, headYCrouch: 1.1,
+  halfX: 0.25, halfZ: 0.15,
+  torso: { y0: 0.9, y1: 1.5 }, torsoCrouch: { y0: 0.6, y1: 1.1 },
+  /** chest = upper 55 % of the torso box, stomach = lower 45 % */ chestFrac: 0.55,
+} as const;
+/** Training target: box 0.5 (x) × 1.8 (y) × 0.3 (z), feet at `pos`, axis-aligned. */
+export const TARGET_BOX = { halfX: 0.25, height: 1.8, halfZ: 0.15 } as const;
+
+export interface HitBox { zone: HitZone; min: Vec3; max: Vec3 }
+export interface PlayerHitboxes { origin: Vec3; yaw: number; head: { center: Vec3; radius: number }; boxes: HitBox[] }
+
+/** Hitboxes of a player: `origin` = feet, `yaw` = body yaw; `head.center` and `boxes` are yaw-local. `inflate` grows the outer
+ * faces (knife sphere-cast). */
+export function hitboxesFor(p: Pick<PlayerState, 'pos' | 'yaw' | 'crouched'>, inflate = 0): PlayerHitboxes {
+  const t = p.crouched ? HITBOX.torsoCrouch : HITBOX.torso;
+  const split = t.y1 - (t.y1 - t.y0) * HITBOX.chestFrac;
+  const hx = HITBOX.halfX + inflate, hz = HITBOX.halfZ + inflate;
+  const box = (zone: HitZone, y0: number, y1: number): HitBox => ({ zone, min: v3(-hx, y0 - (zone === 'legs' ? inflate : 0), -hz), max: v3(hx, y1 + (zone === 'chest' ? inflate : 0), hz) });
+  return {
+    origin: v3(p.pos.x, p.pos.y, p.pos.z), yaw: p.yaw,
+    head: { center: v3(0, p.crouched ? HITBOX.headYCrouch : HITBOX.headY, 0), radius: HITBOX.headRadius + inflate },
+    boxes: [box('chest', split, t.y1), box('stomach', t.y0, split), box('legs', 0, t.y0)],
+  };
+}

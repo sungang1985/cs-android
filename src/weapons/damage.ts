@@ -18,14 +18,15 @@ export function zoneArmored(victim: Pick<PlayerState, 'armor' | 'helmet'>, zone:
 
 /**
  * Applies post-falloff/zone damage with the armour rule, emits damageTaken, and on a kill does the §11.6.1 field
- * reset and pushes a DeathInfo (sim/death.ts finishes the pipeline).
+ * reset and pushes a DeathInfo (sim/death.ts finishes the pipeline). Dead or spawn-protected victims
+ * (`invulnerableUntilTick > tick`, TDM §2.3) take nothing.
  */
 export function applyDamage(
   victim: PlayerState, dmg: number, zone: HitZone, ap: number,
   src: { attacker: EntityId; weapon: WeaponId | 'bomb'; headshot: boolean; dir: Vec3; point: Vec3 },
   state: WorldState, out: SimEventSink,
 ): { dealt: number; armorDealt: number; killed: boolean } {
-  if (!victim.alive || dmg <= 0) return { dealt: 0, armorDealt: 0, killed: false };
+  if (!victim.alive || dmg <= 0 || victim.invulnerableUntilTick > state.tick) return { dealt: 0, armorDealt: 0, killed: false };
   let dealt = dmg, armorDealt = 0;
   if (zoneArmored(victim, zone)) {
     armorDealt = Math.ceil(dmg * (1 - ap) * 0.5);
