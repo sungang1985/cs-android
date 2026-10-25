@@ -19,7 +19,7 @@ export function createPlayer(id: EntityId, team: Team, isBot: boolean, nameKey: 
   return {
     id, team, isBot, nameKey,
     pos: v3(pos.x, pos.y, pos.z), prevPos: v3(pos.x, pos.y, pos.z), vel: v3(), yaw, pitch: 0, prevYaw: yaw, prevPitch: 0,
-    aimOffset: { yaw: 0, pitch: 0 }, heat: 0, shotIndex: 0, lastShotTick: -1000, triggerHeld: false,
+    aimOffset: { yaw: 0, pitch: 0 }, heat: 0, shotIndex: 0, lastShotTick: -1000, triggerHeld: false, prevButtons: 0, rescope: 0,
     hp: 100, armor: 0, helmet: false, alive: true, crouched: false, wantCrouch: false, grounded: true, scoped: 0,
     money, inv: defaultInventory(team), reload: null, hasBomb: false, hasKit: false,
     use: { action: 'none', startTick: 0, endTick: 0, itemId: 0 },

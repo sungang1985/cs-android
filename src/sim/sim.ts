@@ -13,7 +13,7 @@ import { WEAPONS } from '../weapons/defs';
 import { activeWeaponId, activeSlotState } from '../weapons/inventory';
 import { computeSpread, recoverRecoil, tickWeapon } from '../weapons/fire';
 import { stepGrenades } from '../weapons/grenade';
-import { tryPickup } from '../weapons/items';
+import { tryPickup, pickupObjectives } from '../weapons/items';
 import { createMatch, defaultProfiles } from '../rules/match';
 import { tickRound } from '../rules/round';
 import { tickBomb } from '../rules/bomb';
@@ -120,7 +120,11 @@ export class Simulation {
     processDeaths(s, map, this.sink);
 
     // 6. items / bomb / use
-    for (const p of s.players) { if (p.alive) tryPickup(s, p, p.isBot || s.cfg.options.autoPickup, this.sink); }
+    for (const p of s.players) {
+      if (!p.alive) continue;
+      if (p.isBot || s.cfg.options.autoPickup) tryPickup(s, p, true, this.sink);
+      else pickupObjectives(s, p, this.sink); // bomb (T) / kit (CT) always; weapons only via USE
+    }
     tickBomb(s, map, this.sink);
     processDeaths(s, map, this.sink);
 

@@ -35,6 +35,8 @@ export interface PlayerState {
   pos: Vec3; prevPos: Vec3; vel: Vec3; yaw: number; pitch: number; prevYaw: number; prevPitch: number;
   /** Radians. Recoil aim punch; camera shows half of it (§4.3). */
   aimOffset: { yaw: number; pitch: number }; heat: number; shotIndex: number; lastShotTick: number; triggerHeld: boolean;
+  /** Buttons of the previous tick (press-edge detection for SCOPE/THROW/DROP) and the AWP zoom level to restore after the bolt. */
+  prevButtons: number; rescope: 0 | 1 | 2;
   hp: number; armor: number; helmet: boolean; alive: boolean; crouched: boolean; wantCrouch: boolean; grounded: boolean; scoped: 0 | 1 | 2;
   money: number; inv: Inventory; reload: ReloadState | null; hasBomb: boolean; hasKit: boolean;
   use: { action: 'none' | 'plant' | 'defuse' | 'pickup'; startTick: number; endTick: number; itemId: EntityId };
