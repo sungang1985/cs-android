@@ -113,6 +113,13 @@ export class CharacterSystem {
     v.flashUntil = clock + 0.06;
   }
   private readonly pendingDeath = new Map<number, Vector3>();
+  /** Corpse tip-over directions (carried across a setQuality rebuild): dead views plus deaths not yet seen. */
+  deathDirs(): Map<number, Vector3> {
+    const m = new Map<number, Vector3>(this.pendingDeath);
+    for (const [id, v] of this.views) if (!v.alive && v.deathDir) m.set(id, v.deathDir.clone());
+    return m;
+  }
+  restoreDeathDirs(m: ReadonlyMap<number, Vector3>): void { for (const [id, d] of m) this.pendingDeath.set(id, d.clone()); }
 
   update(prev: RenderSnapshot, next: RenderSnapshot, alpha: number, o: CharFrameOpts): void {
     this.frame++;

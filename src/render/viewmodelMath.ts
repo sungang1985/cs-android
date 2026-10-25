@@ -164,3 +164,25 @@ export function approachFov(cur: number, target: number, dt: number): number {
 
 /** C4 LED blink interval (§10.5): 1.0 · (remaining / 35)^1.6 + 0.05 s. */
 export function bombBlinkInterval(remaining: number): number { return 1.0 * Math.pow(clamp(remaining / 35, 0, 1), 1.6) + 0.05; }
+
+/**
+ * Elapsed ticks after the plant at which `bomb_beep` plays — the same tick schedule as the audio engine
+ * (first beep on the plant tick, then `round(interval(remaining) · 60)` ticks apart), so the LED (§10.5)
+ * blinks with the beep on sim time (skip ×4, pause and slow motion included).
+ */
+const BEEP_SCHEDULE: number[] = (() => {
+  const timerTicks = 35 * 60, out: number[] = [];
+  for (let t = 0; timerTicks - t > 0; t += Math.max(1, Math.round(bombBlinkInterval((timerTicks - t) / 60) * 60))) out.push(t);
+  return out;
+})();
+export function bombBeepTicks(): readonly number[] { return BEEP_SCHEDULE; }
+
+/** LED lit for 0.08 s (5 ticks) from each scheduled beep; `remaining` = SnapBomb.remaining (seconds). */
+export function bombLedOn(remaining: number): boolean {
+  if (remaining <= 0) return false;
+  const elapsed = Math.round((35 - remaining) * 60);
+  if (elapsed < 0) return false;
+  let lo = 0, hi = BEEP_SCHEDULE.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (BEEP_SCHEDULE[mid] <= elapsed) lo = mid; else hi = mid - 1; }
+  return elapsed - BEEP_SCHEDULE[lo] < 5;
+}

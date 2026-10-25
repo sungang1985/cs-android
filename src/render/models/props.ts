@@ -9,7 +9,7 @@ import { WEAPON_INDEX, type RenderSnapshot } from '../../sim/state';
 import { clamp } from '../../core/math';
 import { InstBatch } from './batch';
 import { buildMergedWeapon, ledOffset, type WeaponModelId } from './weapons';
-import { bombBlinkInterval } from '../viewmodelMath';
+import { bombLedOn } from '../viewmodelMath';
 import type { MaterialLib } from '../materials';
 
 const MODEL_IDS: readonly WeaponModelId[] = [...WEAPON_INDEX, 'c4'];
@@ -51,10 +51,9 @@ function child(parent: Matrix4, x: number, y: number, z: number, sx: number, sy:
 export class PropSystem {
   private readonly targetAngle = new Map<number, { a: number; seen: number }>();
   private frame = 0;
-  private blinkAcc = 0; private ledOnUntil = 0;
   constructor(private readonly b: SharedBatches) {}
 
-  /** Items, grenades, targets and the planted bomb (LED blink driven by the renderer clock). */
+  /** Items, grenades, targets and the planted bomb (LED blink on sim time, in step with bomb_beep). */
   update(prev: RenderSnapshot, next: RenderSnapshot, alpha: number, clock: number, dt: number): void {
     const b = this.b;
     // items on the ground
@@ -88,14 +87,12 @@ export class PropSystem {
       b.plain.push(child(_m2, 0, 1.62, 0, 0.28, 0.32, 0.28), TARGET.head);
     }
     for (const [id, st] of this.targetAngle) if (st.seen !== frame) this.targetAngle.delete(id);
-    // planted bomb + LED (interval 1.0·(remaining/35)^1.6 + 0.05 s)
+    // planted bomb + LED (beep schedule: interval 1.0·(remaining/35)^1.6 + 0.05 s, on sim ticks)
     if (next.bomb.state === 3) {
       const bm = next.bomb;
       _m2.copy(trs(bm.x, bm.y, bm.z, 0.3, 0, 0));
       b.weapon('c4', _m2);
-      this.blinkAcc += dt;
-      if (this.blinkAcc >= bombBlinkInterval(bm.remaining)) { this.blinkAcc = 0; this.ledOnUntil = clock + 0.08; }
-      if (clock < this.ledOnUntil) { ledOffset(_v).applyMatrix4(_m2); b.led.push(trs(_v.x, _v.y, _v.z, 0, 0, 0, 0.025, 0.012, 0.025)); }
-    } else this.blinkAcc = 0;
+      if (bombLedOn(bm.remaining)) { ledOffset(_v).applyMatrix4(_m2); b.led.push(trs(_v.x, _v.y, _v.z, 0, 0, 0, 0.025, 0.012, 0.025)); }
+    }
   }
 }

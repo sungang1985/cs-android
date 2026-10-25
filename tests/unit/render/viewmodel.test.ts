@@ -1,7 +1,8 @@
 /** Viewmodel / camera motion math (§10.4): springs converge, bob amplitude bounds, phase timings. */
 import { describe, it, expect } from 'vitest';
 import { DEG } from '../../../src/core/math';
-import { ViewmodelMotion, stepSpring, bobOffset, reloadPose, kickFromPattern, Shake, approachFov, bombBlinkInterval, explosionShake, VM, type VmInput, type VmPose } from '../../../src/render/viewmodelMath';
+import { beepInterval, BOMB_TIMER_SEC } from '../../../src/audio/mixer';
+import { ViewmodelMotion, stepSpring, bobOffset, reloadPose, kickFromPattern, Shake, approachFov, bombBlinkInterval, bombBeepTicks, bombLedOn, explosionShake, VM, type VmInput, type VmPose } from '../../../src/render/viewmodelMath';
 
 const pose = (): VmPose => ({ x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0, magY: 0, slideZ: 0, swapNow: false });
 const idle = (dt = 1 / 60, extra: Partial<VmInput> = {}): VmInput => ({ dt, speed: 0, maxSpeed: 4.3, crouch: false, grounded: true, dYaw: 0, dPitch: 0, reloadT: -1, ...extra });
@@ -115,5 +116,35 @@ describe('viewmodelMath', () => {
   it('bomb LED interval: 1.05 s at 35 s, 0.05 s at 0, monotone', () => {
     expect(bombBlinkInterval(35)).toBeCloseTo(1.05); expect(bombBlinkInterval(0)).toBeCloseTo(0.05);
     let prev = 0; for (let r = 0; r <= 35; r += 1) { const i = bombBlinkInterval(r); expect(i).toBeGreaterThanOrEqual(prev); prev = i; }
+  });
+});
+
+describe('C4 LED in sync with bomb_beep (§10.5)', () => {
+  // the audio engine's advanceBeep schedule (src/audio/engine.ts), replayed tick by tick
+  const audioBeeps = (): number[] => {
+    const explode = BOMB_TIMER_SEC * 60, out: number[] = [];
+    let next = 0;
+    for (let tick = 0; tick <= explode; tick++) {
+      let played = false;
+      while (tick >= next) {
+        const remaining = (explode - next) / 60;
+        if (remaining <= 0) { next = Infinity; break; }
+        if (!played) { out.push(tick); played = true; }
+        next += Math.max(1, Math.round(beepInterval(remaining) * 60));
+      }
+    }
+    return out;
+  };
+  it('uses the same tick schedule as the audio engine', () => {
+    expect([...bombBeepTicks()]).toEqual(audioBeeps());
+  });
+  it('LED is lit for 5 ticks from each beep tick, driven only by the sim remaining time', () => {
+    const beeps = new Set(audioBeeps());
+    for (let t = 0; t < BOMB_TIMER_SEC * 60; t++) {
+      const on = bombLedOn((BOMB_TIMER_SEC * 60 - t) / 60);
+      let recent = false; for (let k = 0; k < 5; k++) if (beeps.has(t - k)) recent = true;
+      expect(on, `tick ${t}`).toBe(recent);
+    }
+    expect(bombLedOn(0)).toBe(false);
   });
 });

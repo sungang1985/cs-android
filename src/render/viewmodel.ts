@@ -44,7 +44,8 @@ export class Viewmodel {
     this.scene.add(this.root); this.root.add(this.holder);
     this.root.rotation.order = 'YXZ';
     this.armR = this.buildArm(team, false); this.armL = this.buildArm(team, true); this.root.add(this.armR, this.armL);
-    const fm = lib.additive(lib.sprite('muzzle')); fm.side = DoubleSide;
+    // shared by key: a rebuild (team swap) must not leave one more material in the MaterialLib
+    const fm = lib.shared('vm:flash', () => { const m = lib.additive(lib.sprite('muzzle')); m.side = DoubleSide; return m; });
     this.flash = new Mesh(flashGeometry(), fm); this.flash.visible = false; this.flash.renderOrder = 10;
     const sm = new MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false }); this.owned.push(sm);
     this.screen = new Mesh(new PlaneGeometry(1, 1), sm); this.screen.position.set(0, 0, -0.05); this.screen.scale.set(0.5, 0.5, 1); this.screen.visible = false; this.screen.renderOrder = 20;
@@ -169,6 +170,7 @@ export class Viewmodel {
 
   dispose(): void {
     this.scene.traverse((o) => { if (o instanceof Mesh) o.geometry.dispose(); });
+    this.flash.geometry.dispose(); // not in the scene graph until the first shot
     for (const o of this.owned) o.dispose();
     this.groups.clear();
   }
