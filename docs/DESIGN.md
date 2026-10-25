@@ -1593,6 +1593,10 @@ the shipped code deliberately deviates from the sections above, with the reason;
 | §6.5 CT rotation call | confidence-1 sighting inside a site | also ≥ 2 distinct enemies seen (confidence 1, within 5 s) in the lanes that lead to one site only (Long / A ramp / A connector → A, Tunnel / B door / B connector → B); Mid never calls | a stacked execute is called while it is still in the lane, not when the holders are already dying (T win 67 % → 60 % on Normal) |
 | §6.7 Hard counter-strafe | stop before firing | full opposite input only while speed > max(0.3 m/s, ½ ground-accel step); below that the bot coasts on friction | a full-input brake bounced 0.30 → 0.37 → 0.30 m/s forever (measured), so Hard bots almost never "settled": fixed, Hard T win 39 % → 60 % |
 | §12.1 `ai/balance` harness | human idles at spawn | the human slot is bot-driven (full 5v5); `--idle-human` keeps the old mode | an idle T may hold the bomb and CTs camp an idle last T, which inflated CT time wins (40 % of Hard rounds) |
+| §4.4 weapon cooldowns | one `lastShotTick` | each weapon's cooldown counts from its own last attack (`shotTicks` own property beside `lastShotTick`, weapons/inventory `WeaponMemory`): a pistol shot or a stab never starts the AWP bolt; switching away and back cannot skip it | `PlayerState` stays frozen |
+| §11.7 snapshot items (32) | — | world items are capped at `SNAPSHOT_CAPACITY.items`: a new drop removes the oldest weapon/kit item (never the bomb), so every pickable item is rendered (TDM/training never clear items) | sim/snapshot consistency |
+| §4.4 death / buy drops | "at the feet" | settled on the floor below the feet (an airborne victim's gun or C4 never floats out of reach) | a C4 > 1.8 m up was unreachable |
+| §11 `aimCandidates` | emits `spotted` | pure; the human's `spotted` is emitted once per tick at the end of `step()` (after bot delivery) | render/paused frames queued events without a drain |
 
 Measured balance (`npm run balance`, bot-only 5v5, first to 6, the human slot bot-driven; 48 seeds for Normal/Hard,
 24 for Easy, ≈ 410 rounds each): Easy T 52 % / plant 56 %; Normal T 58 % / plant 46 % / T wins 71 % of post-plant

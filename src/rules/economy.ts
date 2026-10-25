@@ -7,7 +7,8 @@ import type { SimEventSink, SimEvents } from '../sim/events';
 import type { CompiledMap, WorldRect } from '../world/types';
 import { rectContains } from '../world/types';
 import { WEAPONS, type WeaponDef } from '../weapons/defs';
-import { dropItem } from '../weapons/items';
+import type { StaticWorld } from '../world/collision';
+import { dropItem, floorDropPoint } from '../weapons/items';
 import { MODES } from './modes';
 import { itemCost, holderOf, grantItem, equipSlot, rememberBuy, isWeaponItem } from './loadout';
 
@@ -88,12 +89,12 @@ export function canBuy(p: PlayerState, item: ItemId, state: WorldState, map: Com
  * pendingSlot = 0, switchEndsTick = tick + 60) and records it in lastBuy. In the economy mode a replaced primary is
  * dropped as a world item (CS rule); in free modes it is simply replaced. Emits `money` (reason `buy`) and `buy`.
  */
-export function buy(p: PlayerState, item: ItemId, state: WorldState, map: CompiledMap, out: SimEventSink): boolean {
+export function buy(p: PlayerState, item: ItemId, state: WorldState, map: CompiledMap, out: SimEventSink, world?: StaticWorld): boolean {
   const r = canBuy(p, item, state, map);
   if (!r.ok) { out.emit('buy', { player: p.id, item, ok: false, error: r.error }); return false; }
   const economy = MODES[state.cfg.mode].economy;
   if (r.price > 0) addMoney(state, p, -r.price, 'buy', out);
-  if (economy && p.inv.primary && isWeaponItem(item) && WEAPONS[item].slot === 1) dropItem(state, p, 'weapon', out);
+  if (economy && p.inv.primary && isWeaponItem(item) && WEAPONS[item].slot === 1) dropItem(state, p, 'weapon', out, world ? floorDropPoint(p, world) : undefined);
   const slot = grantItem(p, item, economy);
   if (slot) {
     equipSlot(p, slot, state.tick);

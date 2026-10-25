@@ -42,4 +42,12 @@ export default async function ({ page, url, expect, ready, dbg, shot }) {
   expect(ends[0].deltas.some((d) => d.reason === 'win' && d.delta === 3500), 'T win money $3,500 listed');
   expect((await dbg('eventCount', 'bombExploded')) === 1, 'one bombExploded event');
   await shot('round-end');
+
+  // 继续 (continue): a restored match must alias the sim's own cfg so the half-time humanTeam swap reaches the app
+  const aliased = await page.evaluate(() => {
+    const g = globalThis.__cs.game; const json = g.sim.serialize();
+    g.startMatch(JSON.parse(JSON.stringify(g.cfg)), json);
+    return g.cfg === g.sim.state.cfg;
+  });
+  expect(aliased, 'continue: app cfg is the restored sim cfg (half swap visible to the radar filter)');
 }

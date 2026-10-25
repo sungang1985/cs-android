@@ -10,10 +10,25 @@ import { WEAPONS } from './defs';
  * properties on the PlayerState object, so it is serialised, hashed, cloned and restored with the WorldState
  * (see the L3 integration note: these should become declared PlayerState fields).
  *   prevButtons — the InputCommand.buttons of the previous weapon tick (press edges for SCOPE / THROW / DROP);
- *   rescope     — AWP zoom level to restore when the bolt cycle ends (0 = none).
+ *   rescope     — AWP zoom level to restore when the bolt cycle ends (0 = none);
+ *   shotTicks   — per-weapon cooldown base: the `lastShotTick` value each weapon id last wrote. The fire gates read
+ *                 the held weapon's own entry, so one weapon's cycle (AWP bolt, knife stab recovery) never blocks
+ *                 another, while switching away and back cannot skip it. Missing entry = never attacked.
  */
-export interface WeaponMemory { prevButtons?: number; rescope?: 0 | 1 | 2 }
+export interface WeaponMemory { prevButtons?: number; rescope?: 0 | 1 | 2; shotTicks?: Partial<Record<WeaponId, number>> }
 export type WeaponPlayer = PlayerState & WeaponMemory;
+
+/** Tick the cooldown of weapon `id` counts from (its own last attack; -1000 = never). */
+export function shotTickOf(p: PlayerState, id: WeaponId): number {
+  const t = (p as WeaponPlayer).shotTicks?.[id];
+  return t === undefined ? -1000 : t;
+}
+/** Records an attack of weapon `id` (sets `lastShotTick` and the per-weapon cooldown base). */
+export function setShotTick(p: PlayerState, id: WeaponId, tick: number): void {
+  const w = p as WeaponPlayer;
+  p.lastShotTick = tick;
+  (w.shotTicks ??= {})[id] = tick;
+}
 
 /** Owned grenade kind for slot 4: the selected one if owned, else the other, else the selection (empty hand). */
 export function grenadeKind(inv: Inventory): 'he' | 'flash' {

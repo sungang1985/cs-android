@@ -3,13 +3,36 @@
  * the DROP bit and USE swaps; tryPickup runs every tick for alive players (sim.ts step 6) and on a USE press.
  */
 import { v3, type Vec3 } from '../core/math';
-import type { WorldState, PlayerState, ItemState } from '../sim/state';
+import { SNAPSHOT_CAPACITY, type WorldState, type PlayerState, type ItemState } from '../sim/state';
+import type { StaticWorld } from '../world/collision';
 import { LOUDNESS, type SimEventSink } from '../sim/events';
 import { allocId } from '../sim/entities';
 import { WEAPONS } from './defs';
 import { switchTo, type WeaponPlayer } from './inventory';
 
 export const PICKUP = { radius: 1.0, maxDy: 1.2 } as const;
+
+/**
+ * The floor under the player's feet (an airborne victim's drop falls to the ground instead of floating): pass as
+ * dropItem's `at`. Falls back to the feet when there is no floor below.
+ */
+export function floorDropPoint(p: PlayerState, world: StaticWorld): Vec3 {
+  const y = world.floorHeightAt(p.pos.x, p.pos.z, p.pos.y + 0.1, 0);
+  return v3(p.pos.x, Number.isFinite(y) ? y : p.pos.y, p.pos.z);
+}
+
+/**
+ * World items never exceed the snapshot capacity (SNAPSHOT_CAPACITY.items), so every item the sim can pick up is also
+ * rendered: when full, the oldest weapon/kit item is removed (TDM/training never clear items; the bomb always stays).
+ */
+function pushItem(state: WorldState, item: ItemState): void {
+  while (state.items.length >= SNAPSHOT_CAPACITY.items) {
+    const i = state.items.findIndex((it) => it.kind !== 'bomb');
+    if (i < 0) break;
+    state.items.splice(i, 1);
+  }
+  state.items.push(item);
+}
 
 /** Drops the primary ('weapon'), the C4 ('bomb') or the defuse kit ('kit') at `at` (default: the feet). */
 export function dropItem(state: WorldState, p: PlayerState, kind: ItemState['kind'], out: SimEventSink, at?: Vec3): void {
@@ -20,19 +43,19 @@ export function dropItem(state: WorldState, p: PlayerState, kind: ItemState['kin
     if (p.reload && p.reload.weapon === p.inv.primary.id) p.reload = null;
     p.inv.primary = null;
     if (p.inv.active === 1) { p.inv.active = 2; p.scoped = 0; (p as WeaponPlayer).rescope = 0; }
-    state.items.push(item);
+    pushItem(state, item);
     out.emit('itemDrop', { id: item.id, kind: 'weapon', pos: v3(pos.x, pos.y, pos.z) });
   } else if (kind === 'bomb') {
     if (!p.hasBomb) return;
     const item: ItemState = { id: allocId(state), kind: 'bomb', pos, yaw: p.yaw, droppedTick: state.tick };
-    p.hasBomb = false; state.items.push(item);
+    p.hasBomb = false; pushItem(state, item);
     state.bomb.state = 'dropped'; state.bomb.carrier = 0; state.bomb.itemId = item.id; state.bomb.pos = v3(pos.x, pos.y, pos.z);
     out.emit('itemDrop', { id: item.id, kind: 'bomb', pos: v3(pos.x, pos.y, pos.z) });
     out.emit('bombDrop', { pos: v3(pos.x, pos.y, pos.z) });
   } else {
     if (!p.hasKit) return;
     const item: ItemState = { id: allocId(state), kind: 'kit', pos, yaw: p.yaw, droppedTick: state.tick };
-    p.hasKit = false; state.items.push(item);
+    p.hasKit = false; pushItem(state, item);
     out.emit('itemDrop', { id: item.id, kind: 'kit', pos: v3(pos.x, pos.y, pos.z) });
   }
 }
