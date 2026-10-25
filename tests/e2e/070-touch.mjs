@@ -88,6 +88,14 @@ export default async function ({ page, url, expect, ready, dbg, shot, log }) {
   // Buy pill is visible in training (buy anywhere) and the inert band ignores touches
   const buyShown = await page.evaluate(() => getComputedStyle(document.querySelector('[data-testid="touch-buy"]')).display !== 'none');
   expect(buyShown, 'Buy pill visible while canBuy');
+  // the onboarding card is non-blocking (§7.6 teaches the stick / Fire-R / Buy): the controls stay drawn under it
+  const layerShownUnderOnboarding = await page.evaluate(() => {
+    globalThis.__cs.game.screens.onboardingStep(1);
+    const shown = getComputedStyle(document.querySelector('[data-testid="touch-layer"]')).display !== 'none';
+    globalThis.__cs.game.screens.hide('onboarding');
+    return shown;
+  });
+  expect(layerShownUnderOnboarding, 'touch controls visible under the onboarding card');
   await dbg('resume');
   await page.waitForTimeout(200);
   await shot('controls');

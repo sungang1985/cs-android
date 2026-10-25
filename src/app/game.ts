@@ -29,6 +29,7 @@ import { cloneSettings, cloneLayout, type Settings, type TouchLayout, type Quali
 import { buildMatchConfig, pickSeed } from './matchSettings';
 import { MatchStats, EMPTY_STATS } from './stats';
 import { Perf } from './perf';
+import { touchCovered } from './touchCover';
 import { t, setLocale, getLocale } from '../i18n/i18n';
 import { canPlant, canDefuse } from '../rules/bomb';
 
@@ -102,7 +103,8 @@ export class Game {
     window.addEventListener('resize', () => this.onResize());
     this.onResize();
     this.hud.show(false);
-    pwa.onUpdateAvailable(() => { if (!this.inMatch) this.showMain(); });
+    // Only refresh the main menu's toast in place; never navigate away from mode select / settings / stats (§8.2).
+    pwa.onUpdateAvailable(() => { if (!this.inMatch && this.screens.visible().includes('main')) this.showMain(); });
   }
 
   /** The human's CURRENT side (sides swap at the half). */
@@ -178,7 +180,7 @@ export class Game {
       this.audio.handle(e, local); this.renderer.handleEvent(e); this.hud.handleEvent(e); haptics.handle(e, local); this.stats?.handle(e); this.handleEvent(e);
       for (const fn of this.eventListeners) fn(e);
     }
-    this.perf.sample(0, performance.now() - t0, 0);
+    this.perf.sampleTick(performance.now() - t0);
   }
 
   private render(alpha: number, frameDt: number): void {
@@ -190,7 +192,7 @@ export class Game {
     this.audio.syncTick(sim.state.tick);
     this.audio.setListener(this.renderer.cameraPose());
     const rs = this.renderer.stats; this.perf.drawCalls = rs.drawCalls; this.perf.triangles = rs.triangles;
-    this.perf.sample(frameDt * 1000, this.loop.stats.simMs, performance.now() - t0);
+    this.perf.sampleFrame(frameDt * 1000, performance.now() - t0);
   }
 
   private handleEvent(e: SimEnvelope): void {
@@ -240,7 +242,7 @@ export class Game {
       case 'quit': this.showMain(); break;
       case 'menu': this.showMain(); break;
       case 'rematch': if (this.cfg) { const last = persist.get<Partial<MatchConfig> | null>('lastSettings', null); const team = (last?.humanTeam as Team | 'random' | undefined) ?? this.cfg.humanTeam; this.startMatch({ ...this.cfg, humanTeam: team === 'random' ? this.cfg.humanTeam : team, seed: this.cfg.seed + 1 }); } break;
-      case 'changeMode': { const last = this.cfg; this.stopMatch(); for (const s of this.screens.visible()) this.screens.hide(s); this.screens.show('mode', { last }); break; }
+      case 'changeMode': { const last = persist.get<MatchConfig | null>('lastSettings', null); this.stopMatch(); for (const s of this.screens.visible()) this.screens.hide(s); this.screens.show('mode', { last }); break; }
       case 'drop': this.input.press(Btn.DROP); this.pause(false); break;
       case 'openBuy': if (this.sim && this.cfg) { this.input.releasePointer(); this.buyMenu.open(this.next.local, this.humanTeamNow()); this.syncTouchVisibility(); } break;
       case 'closeBuy': this.buyMenu.close(); this.syncTouchVisibility(); break;
@@ -264,6 +266,7 @@ export class Game {
   private onBack(): 'handled' | 'exit' | 'none' {
     if (this.buyMenu.isOpen) { this.buyMenu.close(); return 'handled'; }
     if (this.screens.back()) return 'handled';
+    if (this.screens.visible().includes('matchEnd')) { this.showMain(); return 'handled'; }
     if (this.inMatch) { if (!this.paused) { this.pause(true); return 'handled'; } return 'handled'; }
     if (this.screens.visible().includes('main')) return 'exit';
     return 'none';
@@ -284,7 +287,7 @@ export class Game {
     persist.set('settings', this.settings);
   }
 
-  private applyFpsCap(): void { this.loop.fpsCap = this.settings.batterySaver ? 30 : this.settings.fpsCap; }
+  private applyFpsCap(): void { this.loop.fpsCap = this.settings.batterySaver ? 30 : this.settings.fpsCap; this.perf.fpsCap = this.loop.fpsCap; }
 
   private onResize(): void {
     const w = window.innerWidth, h = window.innerHeight;
@@ -296,9 +299,9 @@ export class Game {
     if (portrait) { if (!this.screens.visible().includes('rotate')) this.screens.show('rotate'); } else this.screens.hide('rotate');
   }
 
-  /** Touch controls are hidden under any screen or the buy menu (they would bleed through the overlays). */
+  /** Touch controls are hidden under blocking screens or the buy menu (they would bleed through the overlays). */
   private syncTouchVisibility(): void {
-    const covered = this.screens.visible().some((s) => s !== 'rotate') || this.buyMenu.isOpen;
+    const covered = touchCovered(this.screens.visible(), this.buyMenu.isOpen);
     this.input.setTouchVisible(this.inMatch && !covered);
   }
 

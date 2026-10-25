@@ -17,6 +17,13 @@ export const pwa = {
     try { void navigator.storage?.persist?.(); } catch { /* ignore */ }
   },
   onUpdateAvailable(fn: () => void): void { listeners.add(fn); if (waiting) fn(); },
-  applyUpdate(): void { if (waiting) { waiting.postMessage('skipWaiting'); navigator.serviceWorker.addEventListener('controllerchange', () => location.reload(), { once: true }); } },
+  applyUpdate(): void {
+    const sw = waiting; if (!sw) return;
+    // sw.js skips waiting on install and claims clients, so the new worker usually already controls the page (and
+    // controllerchange already fired) by the time the toast is tapped: just reload into the new build.
+    if (sw.state === 'activating' || sw.state === 'activated' || navigator.serviceWorker.controller === sw) { location.reload(); return; }
+    navigator.serviceWorker.addEventListener('controllerchange', () => location.reload(), { once: true });
+    sw.postMessage('skipWaiting');
+  },
   hasUpdate(): boolean { return waiting !== null; },
 };
