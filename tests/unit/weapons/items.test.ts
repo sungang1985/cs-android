@@ -1,9 +1,11 @@
 /** §4.4 world items: dropItem, tryPickup (auto vs USE swap), bomb/kit rules, DROP bit toss. */
 import { describe, it, expect } from 'vitest';
-import { v3, DEG } from '@/core/math';
-import { Btn, type ItemState } from '@/sim/state';
-import { dropItem, tryPickup, pickupObjectives } from '@/weapons/items';
-import { recorder, makeState, player, openWorld, cmd, stepWeapon, give, rngs } from './helpers';
+import { v3, DEG, aabb } from '@/core/math';
+import { Btn, SNAPSHOT_CAPACITY, type ItemState } from '@/sim/state';
+import type { CompiledMap } from '@/world/types';
+import { processDeaths } from '@/sim/death';
+import { dropItem, tryPickup, pickupObjectives, floorDropPoint } from '@/weapons/items';
+import { recorder, makeState, player, openWorld, solid, cmd, stepWeapon, give, rngs } from './helpers';
 
 const gun = (id: number, x: number, z = 0, w: 'ak47' | 'awp' | 'm4a4' = 'awp', tick = 0): ItemState => ({ id, kind: 'weapon', weapon: { id: w, mag: 3, reserve: 10 }, pos: v3(x, 0, z), yaw: 0, droppedTick: tick });
 
@@ -93,5 +95,39 @@ describe('DROP bit', () => {
     expect(out.of('weaponSwitch').at(-1)!.weapon).toBe('glock');
     tryPickup(state, p, true, out);
     expect(p.inv.primary).toBeNull();
+  });
+});
+
+describe('item cap (snapshot capacity)', () => {
+  it('never holds more than SNAPSHOT_CAPACITY.items: the oldest weapon/kit gives way, the bomb always stays', () => {
+    const carrier = player(9, 'T', v3(0, 0, 0)); carrier.hasBomb = true;
+    const state = makeState([carrier]); const out = recorder(state);
+    dropItem(state, carrier, 'bomb', out);
+    const bombId = state.bomb.itemId;
+    const ids: number[] = [];
+    for (let i = 0; i < 40; i++) { const v = player(10 + i, 'CT', v3(i, 0, 0)); give(v, 'ak47'); dropItem(state, v, 'weapon', out); ids.push(state.items.at(-1)!.id); }
+    expect(state.items).toHaveLength(SNAPSHOT_CAPACITY.items);
+    expect(state.items[0].id).toBe(bombId);
+    expect(state.items.slice(1).map((i) => i.id)).toEqual(ids.slice(-(SNAPSHOT_CAPACITY.items - 1)));
+  });
+});
+
+describe('drops settle on the floor', () => {
+  const world = openWorld([solid(aabb(4, 0, -1, 6, 1.5, 1), 'lowcrate')]);
+  it('floorDropPoint projects an airborne player onto the floor below (ground or a crate top)', () => {
+    expect(floorDropPoint(player(2, 'CT', v3(0, 2.4, 0)), world)).toEqual(v3(0, 0, 0));
+    expect(floorDropPoint(player(2, 'CT', v3(5, 2.2, 0)), world)).toEqual(v3(5, 1.5, 0));
+    expect(floorDropPoint(player(2, 'CT', v3(5, 1.5, 0)), world)).toEqual(v3(5, 1.5, 0));
+  });
+  it('the death pipeline drops an airborne victim primary and bomb on the floor, where a T can pick the bomb up', () => {
+    const v = player(2, 'T', v3(0, 2.4, 0)); give(v, 'awp'); v.hasBomb = true; v.alive = false;
+    const t = player(3, 'T', v3(0.3, 0, 0));
+    const state = makeState([v, t]); const out = recorder(state);
+    state.pendingDeaths.push({ victim: 2, killer: 0, weapon: 'ak47', headshot: false, dir: v3(0, 0, -1), point: v3(0, 3.4, 0) });
+    processDeaths(state, {} as CompiledMap, out, world);
+    expect(state.items.map((i) => i.pos.y)).toEqual([0, 0]);
+    expect(state.bomb.pos.y).toBe(0);
+    tryPickup(state, t, true, out);
+    expect(t.hasBomb).toBe(true);
   });
 });

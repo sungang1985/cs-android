@@ -76,7 +76,7 @@ export class Game {
         case 'pause': if (this.inMatch) { this.input.releasePointer(); this.pause(true); } break;
         case 'openBuy': this.input.releasePointer(); this.onAction('openBuy'); break;
         case 'scoreboard':
-          if (this.sim && this.cfg) { if (down === false) this.screens.hide('scoreboard'); else this.screens.show('scoreboard', { snapshot: this.next, humanTeam: this.cfg.humanTeam, mvp: this.sim.state.round.mvp }); }
+          if (this.sim && this.cfg) { if (down === false) this.screens.hide('scoreboard'); else this.screens.show('scoreboard', { snapshot: this.next, humanTeam: this.humanTeamNow(), mvp: this.sim.state.round.mvp }); }
           break;
         default: this.onAction(id);
       }
@@ -120,7 +120,8 @@ export class Game {
     const nav = buildNavGraph(map, world);
     const deps = { map, world, nav, brains: createBotBrain() };
     this.sim = restoreJson ? Simulation.restore(restoreJson, deps) : new Simulation(deps, cfg, makeProfiles(cfg));
-    this.cfg = cfg;
+    // alias the sim's own cfg (a restore parses a separate copy): the half-time swap writes state.cfg.humanTeam
+    this.cfg = this.sim.state.cfg;
     this.renderer.loadMap(map); this.radar.loadMap(map); this.audio.setWorld(world);
     const human = this.sim.state.players.find((p) => p.id === this.sim!.state.humanId);
     this.input.setLook(human ? human.yaw : 0, 0);
@@ -193,7 +194,7 @@ export class Game {
   private handleEvent(e: SimEnvelope): void {
     const sim = this.sim!;
     switch (e.type) {
-      case 'spotted': { const d = e.data as SimEvents['spotted']; if (this.cfg && d.team === this.cfg.humanTeam) { const i = this.spotted.findIndex((s) => s.enemy === d.enemy); const entry = { enemy: d.enemy, x: d.pos.x, z: d.pos.z, yaw: 0, tick: sim.state.tick }; if (i >= 0) this.spotted[i] = entry; else this.spotted.push(entry); } break; }
+      case 'spotted': { const d = e.data as SimEvents['spotted']; if (d.team === this.humanTeamNow()) { const i = this.spotted.findIndex((s) => s.enemy === d.enemy); const entry = { enemy: d.enemy, x: d.pos.x, z: d.pos.z, yaw: 0, tick: sim.state.tick }; if (i >= 0) this.spotted[i] = entry; else this.spotted.push(entry); } break; }
       case 'roundEnd': {
         const d = e.data as SimEvents['roundEnd'];
         this.loop.timeScale = 0.5;

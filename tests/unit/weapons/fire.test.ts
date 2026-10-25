@@ -228,6 +228,55 @@ describe('AWP (§4.1/§4.4)', () => {
   });
 });
 
+describe('per-weapon cooldowns (§4.1/§4.4)', () => {
+  /** Ticks (state.tick) at which a `shot` / `knife` event happened while holding `btn` from now on. */
+  function attackTicks(p: ReturnType<typeof player>, btn: number, n: number, s: { state: ReturnType<typeof makeState>; out: ReturnType<typeof recorder>; world: ReturnType<typeof openWorld>; rng: ReturnType<typeof rngs> }): number[] {
+    const at: number[] = [];
+    for (let i = 0; i < n; i++) { const k = s.out.of('shot').length + s.out.of('knife').length; const t = s.state.tick; stepWeapon(p, cmd(p, i % 2 ? 0 : btn), s.state, s.world, s.rng, s.out); if (s.out.of('shot').length + s.out.of('knife').length > k) at.push(t); }
+    return at;
+  }
+  function setup() {
+    const p = player(1, 'CT', v3()); give(p, 'awp'); give(p, 'usp'); // holding the USP, AWP in slot 1
+    const state = makeState([p]); const out = recorder(state); const world = openWorld(); const rng = rngs();
+    return { p, s: { state, out, world, rng } };
+  }
+  it('a pistol shot does not start the AWP bolt: the AWP fires and scopes as soon as its deploy ends', () => {
+    const { p, s } = setup();
+    stepWeapon(p, cmd(p, Btn.FIRE), s.state, s.world, s.rng, s.out);           // USP shot at 1000
+    expect(s.out.of('shot')).toHaveLength(1);
+    stepWeapon(p, cmd(p, 0, { slot: 1 }), s.state, s.world, s.rng, s.out);      // switch at 1001 → deploy ends 1031
+    expect(p.inv.switchEndsTick).toBe(1031);
+    while (s.state.tick < 1031) stepWeapon(p, cmd(p, Btn.SCOPE), s.state, s.world, s.rng, s.out);
+    expect(p.scoped).toBe(0);
+    stepWeapon(p, cmd(p, 0), s.state, s.world, s.rng, s.out);
+    stepWeapon(p, cmd(p, Btn.SCOPE), s.state, s.world, s.rng, s.out);          // 1032: scope works
+    expect(p.scoped).toBe(1);
+    expect(attackTicks(p, Btn.FIRE, 2, s)).toEqual([1033]);
+  });
+  it('switching away and back cannot skip the AWP bolt, even with a pistol shot in between', () => {
+    const { p, s } = setup();
+    p.inv.active = 1;
+    stepWeapon(p, cmd(p, Btn.FIRE), s.state, s.world, s.rng, s.out);           // AWP shot at 1000
+    stepWeapon(p, cmd(p, 0, { slot: 2 }), s.state, s.world, s.rng, s.out);      // 1001 → USP ready 1031
+    while (s.state.tick < 1031) stepWeapon(p, cmd(p), s.state, s.world, s.rng, s.out);
+    expect(attackTicks(p, Btn.FIRE, 1, s)).toEqual([1031]);                    // the USP is not blocked by the bolt
+    stepWeapon(p, cmd(p, 0, { slot: 1 }), s.state, s.world, s.rng, s.out);      // 1032 → AWP deploy ends 1062
+    const shots = attackTicks(p, Btn.FIRE, 60, s);
+    expect(shots[0]).toBeGreaterThanOrEqual(1000 + cycleTicks(WEAPONS.awp) - 1e-6);
+    expect(shots[0]).toBeLessThanOrEqual(1089);
+  });
+  it('a knife stab only delays the knife: a gun drawn after it fires when its deploy ends', () => {
+    const p = player(1, 'CT', v3()); give(p, 'ak47'); p.inv.active = 3;
+    const state = makeState([p]); const out = recorder(state); const world = openWorld(); const rng = rngs();
+    const s = { state, out, world, rng };
+    stepWeapon(p, cmd(p, Btn.SCOPE), state, world, rng, out);                 // stab at 1000
+    expect(out.of('knife')).toHaveLength(1);
+    stepWeapon(p, cmd(p, 0, { slot: 1 }), state, world, rng, out);            // 1001 → AK ready 1031
+    while (state.tick < p.inv.switchEndsTick) stepWeapon(p, cmd(p), state, world, rng, out);
+    expect(attackTicks(p, Btn.FIRE, 1, s)).toEqual([1031]);
+  });
+});
+
 describe('knife (§4.4)', () => {
   function duel(dist: number, victimYaw: number, attackerYaw = YAW_EAST) {
     const a = player(1, 'T', v3(0, 0, 0), attackerYaw); a.inv.active = 3;

@@ -5,9 +5,11 @@ import type { SimEventSink } from './events';
 import type { CompiledMap } from '../world/types';
 import { findPlayer } from './entities';
 import { onKill } from '../rules/economy';
-import { dropItem } from '../weapons/items';
+import type { StaticWorld } from '../world/collision';
+import { dropItem, floorDropPoint } from '../weapons/items';
 
-export function processDeaths(state: WorldState, map: CompiledMap, out: SimEventSink): void {
+/** `world` (when given) settles the dropped items on the floor below an airborne victim. */
+export function processDeaths(state: WorldState, map: CompiledMap, out: SimEventSink, world?: StaticWorld): void {
   void map;
   if (state.pendingDeaths.length === 0) return;
   const deaths = state.pendingDeaths.splice(0, state.pendingDeaths.length);
@@ -22,8 +24,9 @@ export function processDeaths(state: WorldState, map: CompiledMap, out: SimEvent
       onKill(state, killer, d.weapon, out);
       if (state.cfg.mode === 'tdm') { if (killer.team === 'T') state.round.tdmKillsT++; else state.round.tdmKillsCT++; }
     }
-    dropItem(state, victim, 'weapon', out);
-    if (victim.hasBomb) dropItem(state, victim, 'bomb', out);
+    const at = world ? floorDropPoint(victim, world) : undefined;
+    dropItem(state, victim, 'weapon', out, at);
+    if (victim.hasBomb) dropItem(state, victim, 'bomb', out, at);
     delete state.teams[victim.team].assignments[victim.id];
     // spectate an alive teammate (lowest id); 0 if none
     const mate = state.players.find((p) => p.alive && p.team === victim.team && p.id !== victim.id);

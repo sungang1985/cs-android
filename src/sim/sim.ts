@@ -39,6 +39,9 @@ export class Simulation {
   private tickEvents: SimEnvelope[] = [];
   private frozenBots = false;
   private readonly candidates: AimCandidate[] = [];
+  private readonly spotScratch: AimCandidate[] = [];
+  /** True only inside step(): envelopes emitted outside a tick never reach the bots' tickEvents. */
+  private stepping = false;
   private readonly sink: SimEventSink;
   private lastCmd: InputCommand = cloneCommand(IDLE_COMMAND);
 
@@ -46,7 +49,7 @@ export class Simulation {
     this.streams = restored ? new RngStreams(cfg.seed, restored.rng) : new RngStreams(cfg.seed);
     const sink: SimEventSink = { emit: (k, e) => this.events.emit(k, e) };
     this.sink = sink;
-    this.events.onAny((e) => { this.tickEvents.push(e); });
+    this.events.onAny((e) => { if (this.stepping) this.tickEvents.push(e); });
     this.state = restored ?? createMatch(cfg, deps.map, profiles ?? defaultProfiles(cfg), this.streams);
     this.events.tick = this.state.tick;
     this.events.clear(); this.tickEvents.length = 0;
@@ -69,6 +72,7 @@ export class Simulation {
     this.tickEvents.length = 0;
     this.events.tick = s.tick;
     this.lastCmd = cmd;
+    this.stepping = true;
     const map = this.deps.map, world = this.deps.world;
     for (const p of s.players) { p.prevPos.x = p.pos.x; p.prevPos.y = p.pos.y; p.prevPos.z = p.pos.z; p.prevYaw = p.yaw; p.prevPitch = p.pitch; }
 
@@ -103,7 +107,7 @@ export class Simulation {
       const maxSpeed = p.scoped && def.scopedSpeed ? def.scopedSpeed : def.speed;
       movePlayer(p, c, world, maxSpeed, frozen, s.tick, s, this.sink);
     }
-    processDeaths(s, map, this.sink);
+    processDeaths(s, map, this.sink, world);
 
     // 4. weapons
     for (const p of s.players) {
@@ -111,13 +115,13 @@ export class Simulation {
       if (!c || !p.alive) continue;
       if (!frozen) tickWeapon(p, c, s, world, this.streams, this.sink);
       recoverRecoil(p, WEAPONS[activeWeaponId(p)]);
-      if (c.buy) buy(p, c.buy, s, map, this.sink);
+      if (c.buy) buy(p, c.buy, s, map, this.sink, world);
     }
-    processDeaths(s, map, this.sink);
+    processDeaths(s, map, this.sink, world);
 
     // 5. grenades
     stepGrenades(s, world, this.sink);
-    processDeaths(s, map, this.sink);
+    processDeaths(s, map, this.sink, world);
 
     // 6. items / bomb / use
     for (const p of s.players) {
@@ -127,7 +131,7 @@ export class Simulation {
     }
     for (const p of s.players) { const c = commands.get(p.id); if (p.alive && c) applyUseIntent(p, c, s, map, this.sink); }
     tickBomb(s, map, this.sink);
-    processDeaths(s, map, this.sink);
+    processDeaths(s, map, this.sink, world);
 
     // 7. (economy/scores are applied inside round/death) — 8. bot event delivery
     if (!this.frozenBots && this.tickEvents.length) {
@@ -138,6 +142,9 @@ export class Simulation {
         this.brainFor(mem.profile.difficulty).onEvent(e, mem, p, ctx);
       }
     }
+    this.stepping = false;
+    // the human's `spotted` (radar), once per tick; after bot delivery, as before (bots never received it)
+    computeCandidates(s, world, this.spotScratch, this.sink);
     s.rng = this.streams.serialize() as WorldState['rng'];
     s.tick++;
     this.events.tick = s.tick;
@@ -156,8 +163,11 @@ export class Simulation {
     return m ? m.profile.difficulty : this.state.cfg.difficulty;
   }
 
-  /** LOS-checked enemies in front of the human (§7.5); also emits `spotted` for the human. */
-  aimCandidates(): AimCandidate[] { return computeCandidates(this.state, this.deps.world, this.candidates, this.sink); }
+  /**
+   * LOS-checked enemies in front of the human (§7.5). Pure: the human's `spotted` events are emitted once per tick by
+   * step(), so render-time calls (every frame, also while paused) never queue events.
+   */
+  aimCandidates(): AimCandidate[] { return computeCandidates(this.state, this.deps.world, this.candidates); }
 
   setOptions(o: Partial<MatchOptions>): void { Object.assign(this.state.cfg.options, o); }
   freezeBots(b: boolean): void { this.frozenBots = b; }

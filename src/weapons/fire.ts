@@ -11,7 +11,7 @@ import type { StaticWorld } from '../world/collision';
 import { eyePos } from '../world/movement';
 import { findPlayer } from '../sim/entities';
 import { WEAPONS, AWP_BOLT_SEC, GRENADE, type WeaponDef } from './defs';
-import { activeWeaponId, activeSlotState, hasSlot, bestSlot, switchTo, grenadeKind, type WeaponPlayer } from './inventory';
+import { activeWeaponId, activeSlotState, hasSlot, bestSlot, switchTo, grenadeKind, shotTickOf, setShotTick, type WeaponPlayer } from './inventory';
 import { traceShot, nearestActor, headPoint, chestPoint, closestOnRay, HITSCAN } from './hitscan';
 import { computeDamage, applyDamage, zoneArmored } from './damage';
 import { launchGrenade } from './grenade';
@@ -119,6 +119,7 @@ export function tickWeapon(p: PlayerState, cmd: InputCommand, state: WorldState,
     const id = activeWeaponId(p), def = WEAPONS[id];
     if (id !== 'awp') { p.scoped = 0; w.rescope = 0; }
     const ready = tick >= inv.switchEndsTick && !p.throwing && inv.pendingSlot === 0;
+    const lastShot = shotTickOf(p, id);   // this weapon's own last attack: cooldowns never carry over to another weapon
     const ws = activeSlotState(p);
     if (ws) {
       if ((b & Btn.RELOAD) && !p.reload && !p.throwing && ws.mag < def.mag && ws.reserve > 0) {
@@ -128,7 +129,7 @@ export function tickWeapon(p: PlayerState, cmd: InputCommand, state: WorldState,
       }
       if (p.reload) tickReload(p, ws, def, tick, out);
       if (id === 'awp') {
-        const boltEnd = p.lastShotTick + cycleTicks(def), boltDone = tick >= boltEnd - 1e-6;
+        const boltEnd = lastShot + cycleTicks(def), boltDone = tick >= boltEnd - 1e-6;
         // re-scope exactly when the bolt ends; a stale request (bolt ended during a freeze / round change) expires
         if (boltDone && (w.rescope ?? 0) > 0) { if (!p.reload && tick < boltEnd + 2) p.scoped = w.rescope!; w.rescope = 0; }
         if ((b & Btn.SCOPE) && !(prev & Btn.SCOPE) && ready && !p.reload && boltDone) p.scoped = ((p.scoped + 1) % 3) as 0 | 1 | 2;
@@ -138,12 +139,12 @@ export function tickWeapon(p: PlayerState, cmd: InputCommand, state: WorldState,
         const want = def.auto ? (b & Btn.FIRE) !== 0 : press;
         if (want) {
           if (ws.mag <= 0) { if (press) dryFire(p, out); }
-          else if (tick >= p.lastShotTick + cycleTicks(def) - 1e-6) fireGun(p, def, ws, state, world, rng, out);
+          else if (tick >= lastShot + cycleTicks(def) - 1e-6) fireGun(p, def, ws, state, world, rng, out);
         }
       }
     } else if (inv.active === 3 && ready) {
-      // knife: FIRE = slash (0.5 s recovery), SCOPE = stab (1.0 s); next attack at lastShotTick + slash cycle
-      if (tick >= p.lastShotTick + cycleTicks(def) - 1e-6) {
+      // knife: FIRE = slash (0.5 s recovery), SCOPE = stab (1.0 s); next attack at the knife's last attack + slash cycle
+      if (tick >= lastShot + cycleTicks(def) - 1e-6) {
         if (b & Btn.FIRE) knifeAttack(p, false, state, world, out);
         else if (b & Btn.SCOPE) knifeAttack(p, true, state, world, out);
       }
@@ -246,8 +247,8 @@ function fireGun(p: PlayerState, def: WeaponDef, ws: WeaponSlotState, state: Wor
   const spread = computeSpread(def, p);
   const dir = sampleShotDir(p.yaw, p.pitch, p.aimOffset, spread, rng.get('spread'));
   applyRecoil(p, def, rng.get('fire'));
-  const next = p.lastShotTick + cycleTicks(def);
-  p.lastShotTick = tick - next >= 0 && tick - next < 1 ? next : tick;   // keeps the exact average rate for held autos
+  const next = shotTickOf(p, def.id) + cycleTicks(def);
+  setShotTick(p, def.id, tick - next >= 0 && tick - next < 1 ? next : tick);   // keeps the exact average rate for held autos
   ws.mag--;
   p.stats.shots++;
   if (def.id === 'awp' && p.scoped) { w.rescope = p.isBot || state.cfg.options.scopeHold ? p.scoped : 0; p.scoped = 0; }
@@ -327,8 +328,8 @@ export function knifeTrace(p: PlayerState, state: WorldState, world: StaticWorld
 function knifeAttack(p: PlayerState, stab: boolean, state: WorldState, world: StaticWorld, out: SimEventSink): void {
   const def = WEAPONS.knife, tick = state.tick;
   const melee = def.melee!;
-  // next attack at lastShotTick + 30 (slash cycle): a stab's 1.0 s recovery is stored as lastShotTick = tick + 30
-  p.lastShotTick = stab ? tick + Math.round((60 / melee.stabRpm - 60 / def.rpm) * TICKS_PER_SEC) : tick;
+  // next attack at the knife's shot tick + 30 (slash cycle): a stab's 1.0 s recovery is stored as tick + 30
+  setShotTick(p, 'knife', stab ? tick + Math.round((60 / melee.stabRpm - 60 / def.rpm) * TICKS_PER_SEC) : tick);
   const hit = knifeTrace(p, state, world);
   const eye = eyePos(p);
   out.emit('knife', { player: p.id, pos: v3copy(eye), hit: hit !== null, stab });
