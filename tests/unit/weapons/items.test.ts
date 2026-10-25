@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { v3, DEG } from '@/core/math';
 import { Btn, type ItemState } from '@/sim/state';
-import { dropItem, tryPickup } from '@/weapons/items';
+import { dropItem, tryPickup, pickupObjectives } from '@/weapons/items';
 import { recorder, makeState, player, openWorld, cmd, stepWeapon, give, rngs } from './helpers';
 
 const gun = (id: number, x: number, z = 0, w: 'ak47' | 'awp' | 'm4a4' = 'awp', tick = 0): ItemState => ({ id, kind: 'weapon', weapon: { id: w, mag: 3, reserve: 10 }, pos: v3(x, 0, z), yaw: 0, droppedTick: tick });
@@ -63,6 +63,13 @@ describe('tryPickup', () => {
     expect(state.items).toHaveLength(1);
     tryPickup(state, ct, true, out);
     expect(ct.hasKit).toBe(true); expect(state.items).toHaveLength(0);
+  });
+  it('pickupObjectives takes the bomb but never weapons', () => {
+    const t = player(3, 'T', v3(0, 0, 0)); const state = makeState([t]); const out = recorder(state);
+    state.items.push(gun(50, 0.3), { id: 51, kind: 'bomb', pos: v3(0.2, 0, 0), yaw: 0, droppedTick: 0 });
+    state.bomb.state = 'dropped'; state.bomb.itemId = 51;
+    pickupObjectives(state, t, out);
+    expect(t.hasBomb).toBe(true); expect(t.inv.primary).toBeNull(); expect(state.items.map((i) => i.id)).toEqual([50]);
   });
   it('dead players and items on another floor are ignored', () => {
     const p = player(2, 'CT', v3(0, 0, 0)); const state = makeState([p]); const out = recorder(state);

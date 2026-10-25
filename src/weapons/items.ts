@@ -49,8 +49,14 @@ function removeItem(state: WorldState, id: number): void {
  *    `!auto` (the USE-press path): the nearest one is swapped in (the held primary is dropped at the feet) and drawn.
  *    Items dropped this very tick are never swap targets (no ping-pong when called twice in one tick).
  */
-export function tryPickup(state: WorldState, p: PlayerState, auto: boolean, out: SimEventSink): void {
+export function tryPickup(state: WorldState, p: PlayerState, auto: boolean, out: SimEventSink): void { pickup(state, p, auto ? 'auto' : 'use', out); }
+
+/** Bomb (T) / kit (CT) only — for players without auto-pickup, whose weapons are taken only on a USE press. */
+export function pickupObjectives(state: WorldState, p: PlayerState, out: SimEventSink): void { pickup(state, p, 'objectives', out); }
+
+function pickup(state: WorldState, p: PlayerState, mode: 'auto' | 'use' | 'objectives', out: SimEventSink): void {
   if (!p.alive || state.items.length === 0) return;
+  const auto = mode === 'auto';
   const near: ItemState[] = [];
   for (const it of state.items) {
     if (Math.hypot(it.pos.x - p.pos.x, it.pos.z - p.pos.z) <= PICKUP.radius && Math.abs(it.pos.y - p.pos.y) <= PICKUP.maxDy) near.push(it);
@@ -72,7 +78,7 @@ export function tryPickup(state: WorldState, p: PlayerState, auto: boolean, out:
       removeItem(state, it.id);
       p.hasKit = true;
       out.emit('itemPickup', { id: it.id, player: p.id, kind: 'kit' });
-    } else if (it.weapon && WEAPONS[it.weapon.id].slot === 1) {
+    } else if (mode !== 'objectives' && it.weapon && WEAPONS[it.weapon.id].slot === 1) {
       if (auto ? p.inv.primary !== null : it.droppedTick === state.tick) continue;
       const d = Math.hypot(it.pos.x - p.pos.x, it.pos.z - p.pos.z);
       if (d < bestD) { bestD = d; weapon = it; }
