@@ -1594,6 +1594,12 @@ the shipped code deliberately deviates from the sections above, with the reason;
 | §6.7 Hard counter-strafe | stop before firing | full opposite input only while speed > max(0.3 m/s, ½ ground-accel step); below that the bot coasts on friction | a full-input brake bounced 0.30 → 0.37 → 0.30 m/s forever (measured), so Hard bots almost never "settled": fixed, Hard T win 39 % → 60 % |
 | §12.1 `ai/balance` harness | human idles at spawn | the human slot is bot-driven (full 5v5); `--idle-human` keeps the old mode | an idle T may hold the bomb and CTs camp an idle last T, which inflated CT time wins (40 % of Hard rounds) |
 
-Measured balance (12 bot-only matches per difficulty, 5v5, first to 6, `npm run balance`): Easy T 40 % / 42 s rounds /
-54 % plants; Normal T 64 % / 46 s / 69 %; Hard T 27 % / 54 s / 38 % (40 % of Hard rounds end on time). Easy is on
-target; Normal and Hard are tuned in the polish pass (knobs in `src/ai/{combat,brain,strategy,difficulty}.ts`).
+Measured balance (`npm run balance`, bot-only 5v5, first to 6, the human slot bot-driven; 48 seeds for Normal/Hard,
+24 for Easy, ≈ 410 rounds each): Easy T 52 % / plant 56 %; Normal T 58 % / plant 46 % / T wins 71 % of post-plant
+rounds; Hard T 60 % / plant 45 % / 76 % post-plant. No round ends on time any more (mean round ≈ 30–35 s LIVE).
+The remaining T lean is structural (a four-man execute beats the two site holders and rotators arrive one by one);
+the levers tried and rejected on 48-seed A/B runs, each within noise or worse for the CT side: CT regroup before
+entering a hot site (−7 points for CT), CTs not chasing sounds in Mid, a one-enemy rotation call, the mid holder
+in the back spot, the far-site pair holding until the plant, post-plant CTs converging on the bomb, T rush waits
+of 2–10 s, Hard aim/headshot tables. The first measurement (12 seeds, idle human: Easy 40 % / Normal 64 % /
+Hard 27 % with 40 % time-outs) was dominated by the harness artefact and the counter-strafe bug listed above.
