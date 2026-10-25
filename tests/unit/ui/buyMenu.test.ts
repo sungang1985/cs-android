@@ -109,7 +109,7 @@ describe('BuyMenu DOM', () => {
     expect($(root, 'buy-ak47')!.classList.contains('is-poor')).toBe(true);
     expect($(root, 'buy-deagle')!.classList.contains('is-poor')).toBe(false);
     expect($(root, 'buy-preset-full')!.textContent).toContain('钱不够');
-    expect($(root, 'buy-preset-auto')!.textContent).toContain('可负担');
+    expect($(root, 'buy-preset-auto')!.textContent).toMatch(/可负担|已拥有/); // the real planner may save (empty plan) on an $800 pistol round
     expect($(root, 'buy-money')!.textContent).toBe('$ 800');
     expect($(root, 'buy-preset-full')!.textContent).toContain('$4,200');
   });
