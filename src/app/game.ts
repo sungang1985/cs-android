@@ -59,6 +59,7 @@ export class Game {
   private override: { partial: Partial<InputCommand>; ticks: number } | null = null;
   private eventListeners = new Set<(e: SimEnvelope) => void>();
   private roundEndTimer = 0;
+  private menuMapLoaded = false;
   private readonly seedRng: Rng;
   private readonly now: () => number;
   private readonly search: string;
@@ -88,7 +89,7 @@ export class Game {
     this.buyMenu.onBuy((item) => this.input.setBuy(item));
     this.loop = new FixedLoop((dt) => this.tick(dt), (alpha, frameDt) => this.render(alpha, frameDt), { maxSteps: 8 });
     this.perf.auto = this.settings.quality === 'auto';
-    this.perf.onQualityStep = (q) => this.renderer.setQuality(q);
+    this.perf.onQualityStep = (q) => { this.renderer.setQuality(q); this.onResize(); };
     this.applyFpsCap();
     this.bus.on('action', (a) => this.onAction(a.id, a.payload));
     this.bus.on('settingsChanged', (s) => this.applySettings(s));
@@ -143,6 +144,7 @@ export class Game {
   showMain(): void {
     this.stopMatch();
     for (const s of this.screens.visible()) this.screens.hide(s);
+    if (!this.menuMapLoaded) { this.renderer.loadMap(compileMap(DEPOT, 'match')); this.menuMapLoaded = true; }
     this.renderer.menuScene(true);
     this.screens.show('main', { canContinue: persist.get<unknown>('match', null) !== null, updateAvailable: pwa.hasUpdate() });
   }
@@ -180,7 +182,7 @@ export class Game {
     const t0 = performance.now();
     const preview = this.input.previewLook(sim.aimCandidates(), this.next.local);
     this.renderer.render(this.prev, this.next, alpha, preview, frameDt);
-    if (this.frame++ % 3 === 0) { this.hud.update(this.next); this.radar.draw(this.next, this.spotted, preview.yaw); this.updateUseHint(); if (this.buyMenu.isOpen) this.buyMenu.update(this.next.local, this.humanTeamNow()); }
+    if (this.frame++ % 3 === 0) { this.hud.update(this.next); this.radar.draw(this.next, this.spotted, this.renderer.getViewYaw()); this.updateUseHint(); if (this.buyMenu.isOpen) this.buyMenu.update(this.next.local, this.humanTeamNow()); }
     this.audio.syncTick(sim.state.tick);
     this.audio.setListener(this.renderer.cameraPose());
     const rs = this.renderer.stats; this.perf.drawCalls = rs.drawCalls; this.perf.triangles = rs.triangles;
@@ -262,6 +264,7 @@ export class Game {
     this.hud.setSettings(this.settings.controls);
     this.renderer.setFov(this.settings.controls.fovDeg);
     if (this.settings.quality !== 'auto') { this.perf.auto = false; this.renderer.setQuality(this.settings.quality); } else { this.perf.auto = true; this.renderer.setQuality(this.perf.effective); }
+    this.onResize();
     this.audio.setVolumes(this.settings.volume);
     bridge.hapticsEnabled = this.settings.haptics;
     this.applyFpsCap();

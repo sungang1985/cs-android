@@ -14,6 +14,8 @@ export interface TestHooks {
   give(item: ItemId, id?: EntityId): void; setMoney(id: EntityId, m: number): void;
   setInput(partial: Partial<InputCommand>, ticks?: number): void;
   state(): WorldState; snapshot(): RenderSnapshot; hash(): number;
+  /** Stop/resume all drawing (DOM-only screenshots under software WebGL). */
+  setRendering(on: boolean): void;
   eventCount(kind: keyof SimEvents): number; events(kind: keyof SimEvents, last?: number): unknown[]; phase(): RoundPhase;
 }
 
@@ -39,6 +41,7 @@ export function makeTestHooks(game: Game): TestHooks {
     state() { return sim().state; },
     snapshot() { return game.next; },
     hash() { return sim().hash(); },
+    setRendering(on) { game.renderer.setDrawingEnabled(on); },
     eventCount(kind) { return counts.get(kind) ?? 0; },
     events(kind, last = 20) { return (recent.get(kind) ?? []).slice(-last); },
     phase() { return sim().state.round.phase; },

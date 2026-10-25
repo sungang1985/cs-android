@@ -66,6 +66,9 @@ export class GameRenderer {
   private lastYaw = NaN; private lastPitch = 0;
   private aliveYaw = 0; private alivePitch = 0; private viewYaw = 0;
   private menu = false; private menuRaf = 0; private menuLast = 0; private menuFrame = 0;
+  /** Tests: when false, nothing is drawn (DOM screenshots under software WebGL would otherwise stall). */
+  private drawingEnabled = true;
+  setDrawingEnabled(b: boolean): void { this.drawingEnabled = b; }
   private menuSnap: RenderSnapshot | null = null;
   private dio: MapLike | null = null;
   private readonly eye = new Vector3(); private readonly tgt = new Vector3();
@@ -186,6 +189,7 @@ export class GameRenderer {
 
   // ───────── per frame ─────────
   render(prev: RenderSnapshot, next: RenderSnapshot, alpha: number, preview: LookPreview, frameDt: number): void {
+    if (!this.drawingEnabled) return;
     const t0 = performance.now();
     const gl = this.gl, w = this.w;
     const l = next.local;
@@ -402,7 +406,7 @@ export class GameRenderer {
       if (this.menuFrame++ % 2) return; // 30 fps is plenty for a backdrop (battery)
       const dt = this.menuLast ? Math.min(0.1, (now - this.menuLast) / 1000) : 1 / 30;
       this.menuLast = now;
-      this.renderMenu(dt);
+      if (this.drawingEnabled) this.renderMenu(dt);
     };
     this.menuRaf = requestAnimationFrame(step);
   }

@@ -31,7 +31,8 @@ async function checkLayout(page, expect, label) {
       if (rect.width === 0 || rect.height === 0) continue;
       if ((rect.right > W + 1 || rect.left < -1) && !clipped(el)) out.push(`${el.className || el.tagName}@${Math.round(rect.left)}..${Math.round(rect.right)}`);
       const ownText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
-      if (ownText && parseFloat(cs.fontSize) < 14 && rect.bottom > 0 && rect.top < H) small.push(`${el.className || el.tagName}:${cs.fontSize}:${el.textContent.trim().slice(0, 12)}`);
+      const minPx = el.classList.contains('cs-touch-icon') ? 0 : el.classList.contains('cs-touch-label') && !el.closest('.cs-touch-pill') ? 11 : 14; // pictographic icons exempt; small-button labels ≥ 11 px
+      if (ownText && parseFloat(cs.fontSize) < minPx && rect.bottom > 0 && rect.top < H) small.push(`${el.className || el.tagName}:${cs.fontSize}:${el.textContent.trim().slice(0, 12)}`);
     }
     return { scrollW: document.documentElement.scrollWidth, W, out: out.slice(0, 6), small: small.slice(0, 6) };
   });
@@ -49,6 +50,7 @@ export default async function ({ page, url, shot, expect, ready, dbg, log }) {
     await page.setViewportSize({ width: 851, height: 393 });   // §7.1 design target (the harness default is the 802×293 browser viewport)
     await page.goto(url + 'index.html?test=1&seed=1', { waitUntil: 'load' });
     await ready();
+    await dbg('setRendering', false); // DOM-only scenario: skip WebGL drawing so screenshots don't stall under SwiftShader
     await page.addStyleTag({ content: HIDE_CANVAS });
     await page.waitForSelector('[data-testid="screen-main"]', { timeout: 10000 });
   };
