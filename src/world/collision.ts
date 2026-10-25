@@ -6,7 +6,8 @@
  * Bodies (players) are AABBs positioned by their feet centre: box = [x-hw, y, z-hw] .. [x+hw, y+h, z+hw].
  * Ramps and stairs are authored as stacks of thin boxes; the step-up logic climbs them.
  */
-import { Aabb, Vec3, v3, v3copy, aabbOverlap, rayAabb } from '../core/math';
+import { Aabb, Vec3, v3, v3copy, aabbOverlap } from '../core/math';
+import type { SolidKind } from './types';
 
 export type SurfaceId = 'concrete' | 'sand' | 'wood' | 'metal' | 'brick' | 'ground' | 'glass' | 'plaster';
 
@@ -21,8 +22,8 @@ export interface Solid {
   tag?: string;
   /** Damage multiplier when a bullet passes through (0.6 crates/sandbags, 0.4 tall crates for the AWP); undefined = 0. */
   penetrationFactor?: number;
-  /** Authoring kind (see world/types.ts SolidKind). */
-  kind?: string;
+  /** Authoring kind (world/types.ts SolidKind): 'ramp-step' solids are climbable, 'seal' solids are invisible. */
+  kind?: SolidKind;
 }
 
 export interface RayHit {
@@ -59,6 +60,8 @@ export interface BodyShape {
 }
 
 const SKIN = 1e-4;
+/** Kinds that are player-clipped up to the sky when moveBody runs with `clipWalls` (see moveBody). */
+const CLIP_KINDS: readonly string[] = ['wall', 'lintel', 'seal'];
 
 /** Ray vs AABB returning [tEnter, tExit] or null (tEnter clamped to >= 0). */
 export function rayAabbRange(origin: Vec3, dir: Vec3, box: Aabb, tMax = Infinity): [number, number] | null {
@@ -270,9 +273,19 @@ export class StaticWorld {
   /**
    * Move an AABB body by vel*dt with axis-separated sweeps, step-up and ground snapping.
    * `pos` is the feet centre. Gravity must already be applied to vel by the caller.
+   * Step-up (≤ shape.stepHeight) normally needs `wasGrounded`; with `airStep` an airborne body may also step onto a
+   * ledge whose top is ≤ stepHeight above its feet (how a standing jump, apex 0.9 m, mounts a 1 m crate, §2.1); an
+   * airborne step-up cancels upward velocity so it can never chain into a higher climb, and it needs `airStepHeadroom`
+   * metres of free space above the ledge (movement passes the standing height, so nobody mantles onto a 3 m wall
+   * top under the 4.5 m ceiling).
+   * `clipWalls` (player clip): solids of kind wall / lintel / seal extend upward without limit for this body's
+   * horizontal sweeps and step tests, so a body can never get onto a 3 m wall top (e.g. by crouch-jumping off the
+   * 2.5 m crate on the A platform). Rays, LOS and grenades are unaffected (they never call moveBody).
    */
-  moveBody(pos: Vec3, vel: Vec3, dt: number, shape: BodyShape, opts: { wasGrounded?: boolean; snapDown?: boolean } = {}): MoveResult {
+  moveBody(pos: Vec3, vel: Vec3, dt: number, shape: BodyShape, opts: { wasGrounded?: boolean; snapDown?: boolean; airStep?: boolean; airStepHeadroom?: number; clipWalls?: boolean } = {}): MoveResult {
     const hw = shape.halfWidth, h = shape.height;
+    const clip = opts.clipWalls === true;
+    const topOf = (s: Solid): number => (clip && s.kind !== undefined && CLIP_KINDS.includes(s.kind) ? Infinity : s.box.max.y);
     const p = v3copy(pos); const v = v3copy(vel);
     let hitWall = false, hitCeiling = false, steppedUp = false, grounded = false;
     let groundSurface: SurfaceId = 'ground';
@@ -286,12 +299,13 @@ export class StaticWorld {
       setBox(p.x, p.y, p.z);
       const swept: Aabb = { min: v3copy(box.min), max: v3copy(box.max) };
       if (amount > 0) swept.max[axis] += amount; else swept.min[axis] += amount;
+      if (clip) swept.min.y = -1e9; // clipped solids below the body still block it
       this.query(swept, tmp);
       let allowed = amount;
       for (const s of tmp) {
         const sb = s.box;
         // must overlap on the other two axes to block
-        if (!(sb.max.y > box.min.y + SKIN && sb.min.y < box.max.y - SKIN)) continue;
+        if (!(topOf(s) > box.min.y + SKIN && sb.min.y < box.max.y - SKIN)) continue;
         const other = axis === 'x' ? 'z' : 'x';
         if (!(sb.max[other] > box.min[other] + SKIN && sb.min[other] < box.max[other] - SKIN)) continue;
         if (amount > 0) {
@@ -306,11 +320,12 @@ export class StaticWorld {
     };
 
     /** Try to climb a step: returns the horizontal distance moved at the lifted height, or null if not a real step. */
+    const airborne = !(opts.wasGrounded ?? true);
     const tryStepUp = (axis: 'x' | 'z', amount: number, groundAllowed: number): number | null => {
-      if (!(opts.wasGrounded ?? true) || shape.stepHeight <= 0) return null;
+      if ((airborne && !opts.airStep) || shape.stepHeight <= 0) return null;
       const lifted = p.y + shape.stepHeight;
       setBox(p.x, lifted, p.z);
-      if (this.overlaps(box)) return null;
+      if (this.bodyOverlaps(box, clip)) return null;
       const save = p.y; p.y = lifted;
       const moved = moveAxis(axis, amount);
       // Must get meaningfully farther than at ground level, and land on something higher than before.
@@ -318,6 +333,10 @@ export class StaticWorld {
       p[axis] += moved;
       const floor = this.floorHeightAt(p.x, p.z, p.y, hw);
       if (floor <= save + 1e-6 || floor > lifted + SKIN) { p[axis] -= moved; p.y = save; return null; }
+      if (airborne && (opts.airStepHeadroom ?? 0) > h) {
+        setBox(p.x, floor + SKIN, p.z); box.max.y = floor + (opts.airStepHeadroom ?? h); // (setBox is redone before every use)
+        if (this.bodyOverlaps(box, clip)) { p[axis] -= moved; p.y = save; return null; }
+      }
       p.y = floor;
       return moved;
     };
@@ -330,6 +349,7 @@ export class StaticWorld {
         const stepped = tryStepUp(axis, want, allowed);
         if (stepped !== null) {
           steppedUp = true;
+          if (airborne && v.y > 0) v.y = 0;
           if (Math.abs(stepped) < Math.abs(want) - 1e-6) { hitWall = true; v[axis] = 0; }
           continue;
         }
@@ -384,6 +404,27 @@ export class StaticWorld {
     }
 
     return { pos: p, vel: v, grounded, hitWall, hitCeiling, steppedUp, groundSurface };
+  }
+
+  /** overlaps() for a moving body; with `clip`, wall/lintel/seal solids extend upward without limit (player clip). */
+  private bodyOverlaps(box: Aabb, clip: boolean): boolean {
+    if (!clip) return this.overlaps(box);
+    if (this.groundY !== null && box.min.y < this.groundY - SKIN) return true;
+    const q: Aabb = { min: v3(box.min.x, -1e9, box.min.z), max: v3copy(box.max) };
+    const st = ++this.stamp;
+    let hit = false;
+    this.forCells(q, (ci) => {
+      if (hit) return;
+      for (const id of this.cells[ci]) {
+        if (this.stamps[id] === st) continue;
+        this.stamps[id] = st;
+        const s = this.solids[id], b = s.box;
+        if (!(b.min.x < box.max.x && b.max.x > box.min.x && b.min.z < box.max.z && b.max.z > box.min.z)) continue;
+        const top = s.kind !== undefined && CLIP_KINDS.includes(s.kind) ? Infinity : b.max.y;
+        if (b.min.y < box.max.y && top > box.min.y) { hit = true; return; }
+      }
+    });
+    return hit;
   }
 
   /** Surface id of the solid whose top is at height y under (x,z); 'ground' for the plane. */
