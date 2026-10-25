@@ -17,7 +17,12 @@ export type MaterialId = 'concrete' | 'concrete_base' | 'floor' | 'floor_stripe'
 export type AreaId = 't_spawn' | 't_north' | 't_south' | 'long' | 'mid' | 'tunnel' | 'ct_spawn' | 'site_a' | 'site_b' | 'a_ramp' | 'a_ramp_ct' | 'mid_window' | 'tunnel_window' | 'a_connector' | 'b_connector' | 'b_door_ct';
 export type SolidKind = 'wall' | 'tallcrate' | 'lowcrate' | 'sandbag' | 'lip' | 'ramp-step' | 'platform' | 'lintel' | 'ceiling' | 'seal';
 
-export interface PropDef { height: number; inset: number; material: MaterialId; surface: CollisionSurfaceId; penetrable: boolean; penetrationFactor: number; blocksLos: 'full' | 'low' }
+/**
+ * One prop glyph's geometry. `inset` shrinks the box on all four sides inside its 2 m cell (`c`: 0.5 → a 1 m cube);
+ * the box sits on the cell's local floor. `kind` is the SolidKind the compiler emits (defaults: X tallcrate,
+ * c lowcrate, ~ sandbag, L lip). LOS is purely geometric; `blocksLos` is a readability hint only.
+ */
+export interface PropDef { height: number; inset: number; material: MaterialId; surface: CollisionSurfaceId; penetrable: boolean; penetrationFactor: number; kind?: SolidKind; blocksLos: 'full' | 'low' }
 
 export interface MapSource {
   id: string; name: { zh: string; en: string };
@@ -46,14 +51,20 @@ export interface WorldArea { id: AreaId; rect: WorldRect }
 export interface WorldSpawn { pos: Vec3; yaw: number }
 export interface WorldHoldSpot { id: string; pos: Vec3; yaw: number; team: Team | 'both'; crouch: boolean }
 
+/**
+ * 1 m walk grid (§3.5 step 3). Sub-cell (sx, sz) has index `sz * cols + sx` and centre (originX + sx + 0.5, originZ + sz + 0.5).
+ */
 export interface WalkGrid {
   cell: 1; cols: number; rows: number;
-  /** 1 = a standing body fits at the sub-cell centre on its floor */
+  /** 1 = a standing body (0.6 × 1.8 × 0.6) centred on the sub-cell at its floor overlaps no solid except ramp steps */
   walkable: Uint8Array;
-  /** 1 = sub-cell lies on a ramp (edges along the ascend axis are always created) */
+  /** 1 = sub-cell lies on a ramp (`=` cell); edges along the ramp's ascend axis are always created (§6.4) */
   ramp: Uint8Array;
+  /** ramp sub-cells only: the ascend axis, 1 = x (ramp ascends 'e'/'w'), 2 = z ('n'/'s'); 0 elsewhere */
+  rampAxis: Uint8Array;
+  /** local floor height; ramp sub-cells store the wedge height at their centre (0.375 / 1.125 m on Depot) */
   floorY: Float32Array;
-  /** world (x, z) → array index (clamped) */
+  /** world (x, z) → array index (clamped to the grid) */
   index(x: number, z: number): number;
   originX: number; originZ: number;
 }
@@ -61,12 +72,16 @@ export interface WalkGrid {
 export interface RenderHints {
   /** same index as CompiledMap.solids */
   solids: { material: MaterialId | null; kind: SolidKind; uvScale: 0.5 }[];
+  /** floor-0 quads (greedy rectangles over every non-wall cell outside platforms, no overlaps) + one top per platform */
   floorQuads: { rect: WorldRect; material: MaterialId }[];
   ramps: { origin: Vec3; ascend: 'n' | 's' | 'e' | 'w'; from: number; to: number; width: 2; length: 2; material: MaterialId }[];
+  /** pos = door cell centre at its floor; axis = the walk-through direction ('x': the door is in a north–south wall, frame spans z) */
   doorFrames: { pos: Vec3; axis: 'x' | 'z'; width: 2; height: 2.6; material: MaterialId }[];
+  /** one per 4 × 4 m block that contains floor (centroid of the block's open cells), y = ceilingY − 0.1 */
   lamps: Vec3[];
   siteDecals: { site: 'a' | 'b'; rect: WorldRect }[];
   wallSigns: { site: 'a' | 'b'; pos: Vec3; yaw: number }[];
+  /** top-down outline segments (merged, axis-aligned) of kind wall/lip/tallcrate; seals excluded */
   radarWalls: { x0: number; z0: number; x1: number; z1: number }[];
   bounds: Aabb; ceilingY: number;
 }
