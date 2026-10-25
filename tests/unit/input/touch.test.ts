@@ -50,6 +50,16 @@ describe('touch overlay DOM', () => {
       expect(r.tick().buttons & Btn.FIRE).toBe(Btn.FIRE); // the first touch also counts
     } finally { delete (window as unknown as { matchMedia?: unknown }).matchMedia; }
   });
+  it('setTouchVisible(false) hides the overlay but touches keep working', () => {
+    r = rig();
+    r.input.setTouchVisible(false);
+    const root = r.ui.querySelector('[data-testid="touch-layer"]') as HTMLElement;
+    expect(root.style.display).toBe('none'); expect(r.input.isTouchVisible()).toBe(false);
+    const p = pct(70, 40); tap(1, p.x, p.y);
+    expect(r.tick().buttons & Btn.FIRE).toBe(Btn.FIRE);
+    r.input.setTouchVisible(true);
+    expect(root.style.display).toBe('');
+  });
   it('contextual controls follow the snapshot (scope = AWP, grenades, Use pill label, Buy pill)', () => {
     r = rig();
     const vis = (id: ControlId) => r.input.touch.isControlVisible(id);

@@ -105,9 +105,12 @@ export class DesktopInput {
     window.removeEventListener('mousemove', this.onMouseMove); window.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('contextmenu', this.onContextMenu);
     document.removeEventListener('pointerlockchange', this.onLockChange);
-    if (this.locked) { this.intentionalUnlock = true; document.exitPointerLock?.(); }
+    this.releaseLock();
     this.locked = false; this.keys.clear(); this.mouseBits = 0; this.latched = 0; this.slot = 0; this.grenade = 0; this.spectate = 0;
   }
+
+  /** Frees the mouse (modal screens) without the lock-loss pause. */
+  releaseLock(): void { if (this.locked) { this.intentionalUnlock = true; document.exitPointerLock?.(); } }
 
   /** Tracks the active slot for Q (last weapon). */
   noteActiveSlot(slot: number): void { if (slot !== this.curSlot) { if (this.curSlot) this.lastSlot = this.curSlot; this.curSlot = slot; } }
@@ -146,7 +149,7 @@ export class DesktopInput {
         if (local && local.activeSlot === 4 && local.he > 0 && local.flash > 0) this.grenade = local.selectedGrenade === 0 ? 2 : 1;
         else this.slot = 4;
         break;
-      case 'KeyB': if (this.locked) { this.intentionalUnlock = true; document.exitPointerLock?.(); } this.sink.uiAction('openBuy'); break;
+      case 'KeyB': this.releaseLock(); this.sink.uiAction('openBuy'); break;
       case 'Tab': this.sink.uiAction('scoreboard', true); break;
       case 'Escape': this.pause(); break;
       case 'ArrowLeft': this.spectate = -1; break;

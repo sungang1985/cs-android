@@ -169,7 +169,8 @@ export class TouchLayer {
   get isAttached(): boolean { return this.attached; }
   get visible(): boolean { return this.userVisible && !this.autoHidden; }
   get userEnabled(): boolean { return this.userVisible; }
-  setUserVisible(b: boolean): void { this.userVisible = b; if (!b) this.reset(); this.applyVisible(); }
+  /** Visual only: hidden controls keep working (onboarding fades them; menus block touches via `.screen`). */
+  setUserVisible(b: boolean): void { this.userVisible = b; this.applyVisible(); if (b) this.relayout(); }
   setLayout(l: TouchLayout): void { this.layout = l; this.relayout(); }
   setUseHint(a: 0 | 1 | 2 | 3): void { this.useHint = a; }
   /** Control currently visible (hit-testable). */
@@ -217,7 +218,7 @@ export class TouchLayer {
 
   // ───────── pointer handling ─────────
   private handleDown(e: PointerEvent): void {
-    if (!this.attached || !this.userVisible || e.pointerType === 'mouse') return;
+    if (!this.attached || e.pointerType === 'mouse') return;
     if (e.defaultPrevented || !isGameSurface(e.target) || this.ptrs.has(e.pointerId)) return;
     if (!this.touched) { this.touched = true; if (this.autoHidden) { this.autoHidden = false; this.applyVisible(); this.relayout(); } this.sink.firstTouch(); }
     const x = e.clientX, y = e.clientY, now = this.now();

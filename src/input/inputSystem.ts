@@ -140,6 +140,8 @@ export class InputSystem {
   /** UI-originated actions the input layer cannot reach on its own (Buy pill, pause, B/Tab/Esc). */
   onUiAction(fn: (id: UiActionId, down?: boolean) => void): void { this.uiHandler = fn; }
   private emitUi(id: UiActionId, down?: boolean): void { this.uiHandler?.(id, down); }
+  /** Desktop: leave pointer lock without the lock-loss pause (call when a modal screen opens). */
+  releasePointer(): void { this.desktop.releaseLock(); }
   /** Optional: forces the Use pill (1 plant, 2 defuse, 3 pick up) when the app knows an action is available. */
   setUseHint(a: 0 | 1 | 2 | 3): void { this.touch.setUseHint(a); }
 
