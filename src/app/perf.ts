@@ -22,13 +22,21 @@ export class Perf {
   onQualityStep: ((q: 'low' | 'medium' | 'high') => void) | null = null;
   auto = true;
   effective: 'low' | 'medium' | 'high' = 'medium';
-  sample(frameMs: number, simMs: number, renderMs: number, botMs = 0): void {
-    this.frame.push(frameMs); this.sim.push(simMs); this.render.push(renderMs); this.bot.push(botMs);
+  /** Display cap (0 = uncapped). The 18 / 12 ms thresholds of §10.3 are for the 16.6 ms budget; they scale with the
+   *  cap so a deliberate 30 fps cap is not mistaken for a slow device. */
+  fpsCap = 0;
+  /** One sim tick (sim.step + drain). */
+  sampleTick(simMs: number, botMs = 0): void { this.sim.push(simMs); this.bot.push(botMs); }
+  /** One rendered frame: the frame interval drives Auto stepping. */
+  sampleFrame(frameMs: number, renderMs: number): void {
+    this.frame.push(frameMs); this.render.push(renderMs);
     this.t += frameMs;
     if (!this.auto || this.frame.size < 60) return;
+    const scale = (1000 / (this.fpsCap > 0 && this.fpsCap < 60 ? this.fpsCap : 60)) / (1000 / 60);
+    const hot = 18 * scale, cool = 12 * scale;
     const p95 = this.frame.stats().p95;
-    if (p95 > 18) { this.coolSince = this.t; if (this.hotSince === 0) this.hotSince = this.t; else if (this.t - this.hotSince > 5000) { this.hotSince = 0; this.step(-1); } }
-    else { this.hotSince = 0; if (p95 < 12) { if (this.coolSince === 0) this.coolSince = this.t; else if (this.t - this.coolSince > 30000) { this.coolSince = 0; this.step(1); } } else this.coolSince = this.t; }
+    if (p95 > hot) { this.coolSince = this.t; if (this.hotSince === 0) this.hotSince = this.t; else if (this.t - this.hotSince > 5000) { this.hotSince = 0; this.step(-1); } }
+    else { this.hotSince = 0; if (p95 < cool) { if (this.coolSince === 0) this.coolSince = this.t; else if (this.t - this.coolSince > 30000) { this.coolSince = 0; this.step(1); } } else this.coolSince = this.t; }
   }
   private step(dir: 1 | -1): void {
     const order: Array<'low' | 'medium' | 'high'> = ['low', 'medium', 'high'];

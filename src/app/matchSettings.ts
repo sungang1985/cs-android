@@ -14,7 +14,8 @@ export function buildMatchConfig(partial: Partial<MatchConfig> & { humanTeam?: T
     tdmSeconds: base.tdmSeconds, tdmKills: base.tdmKills, mapId: 'depot',
     options: { autoPickup: settings.autoPickup, scopeHold: settings.scopeHold },
   };
-  persist.set('lastSettings', { mode: cfg.mode, humanTeam: partial.humanTeam ?? cfg.humanTeam, difficulty: cfg.difficulty, teamSize: cfg.teamSize, roundsToWin: cfg.roundsToWin });
+  // Training forces T and is not a user preference: keep the mode screen's / rematch's last real choice.
+  if (cfg.mode !== 'training') persist.set('lastSettings', { mode: cfg.mode, humanTeam: partial.humanTeam ?? cfg.humanTeam, difficulty: cfg.difficulty, teamSize: cfg.teamSize, roundsToWin: cfg.roundsToWin });
   return cfg;
 }
 

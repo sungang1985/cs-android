@@ -18,8 +18,10 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import java.io.ByteArrayInputStream
 import java.io.IOException
+import java.util.Locale
 
 /**
  * Thin fullscreen WebView host for the CS Strike web game (built from the repository root with
@@ -34,6 +36,8 @@ import java.io.IOException
 class MainActivity : Activity() {
 
     private lateinit var webView: WebView
+    /** Uptime of the last back press the page answered 'none' to (§14.4 double-press exit). */
+    private var lastNoneBackAt = 0L
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -132,8 +136,9 @@ class MainActivity : Activity() {
 
     /**
      * Hardware back: let the web app decide. It may define `window.__csBack()` returning
-     * "handled" (consumed, e.g. closed a menu) or "exit" (finish the activity). Anything else
-     * falls back to opening the in-game pause menu via a DOM event.
+     * "handled" (consumed, e.g. closed a menu) or "exit" (finish the activity). Anything else ("none",
+     * or no handler, e.g. on the WebGL2-unsupported page) dispatches cs-back and shows 「再按一次退出」;
+     * a second such press within 2 s finishes the activity (§14.4).
      */
     @Deprecated("Legacy back handling is intentional (no AndroidX); predictive back is disabled in the manifest.")
     override fun onBackPressed() {
@@ -141,7 +146,16 @@ class MainActivity : Activity() {
             when (result?.trim('"')) {
                 "exit" -> finish()
                 "handled" -> Unit
-                else -> dispatchJsEvent("cs-back")
+                else -> {
+                    dispatchJsEvent("cs-back")
+                    val now = android.os.SystemClock.uptimeMillis()
+                    if (lastNoneBackAt != 0L && now - lastNoneBackAt <= 2000L) finish()
+                    else {
+                        lastNoneBackAt = now
+                        val zh = Locale.getDefault().language == "zh"
+                        Toast.makeText(this, if (zh) "再按一次退出" else "Press back again to exit", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         }
     }
