@@ -32,6 +32,9 @@ export class DesktopInput {
   grenade: InputCommand['grenade'] = 0;
   spectate: -1 | 0 | 1 = 0;
   private mouseBits = 0;
+  /** Physical button mask (1 LMB, 2 RMB) as last seen; `armed` = the subset pressed while locked (drives mouseBits). */
+  private mouseMask = 0; private armed = 0;
+  private fireBit: number = Btn.FIRE;
   private readonly keys = new Set<string>();
   private locked = false;
   private attached = false;
@@ -50,22 +53,17 @@ export class DesktopInput {
     this.keys.delete(e.code);
     if (e.code === 'Tab') this.sink.uiAction('scoreboard', false);
   };
-  private readonly onBlur = () => { this.keys.clear(); this.mouseBits = 0; };
+  private readonly onBlur = () => { this.keys.clear(); this.mouseBits = 0; this.armed = 0; this.mouseMask = 0; };
   private readonly onPointerDown = (e: PointerEvent) => {
     if (e.pointerType !== 'mouse') return;
-    if (!this.locked) {
-      if (e.button === 0 && isGameSurface(e.target) && !e.defaultPrevented) this.requestLock();
-      return;
-    }
-    const local = this.sink.local();
-    if (e.button === 0) { const bit = local && local.activeSlot === 4 ? Btn.THROW : Btn.FIRE; this.mouseBits |= bit; this.latched |= bit; }
-    else if (e.button === 2) { this.mouseBits |= Btn.SCOPE; this.latched |= Btn.SCOPE; }
+    if (!this.locked && e.button === 0 && isGameSurface(e.target) && !e.defaultPrevented) this.requestLock(); // the locking click does not fire
+    this.syncButtons(e);
   };
-  private readonly onPointerUp = (e: PointerEvent) => {
-    if (e.pointerType !== 'mouse') return;
-    if (e.button === 0) this.mouseBits &= ~(Btn.FIRE | Btn.THROW);
-    else if (e.button === 2) this.mouseBits &= ~Btn.SCOPE;
-  };
+  /**
+   * Chorded presses (Pointer Events): only the first button down fires pointerdown and only the last one up fires
+   * pointerup; the others arrive as pointermove. Held bits are therefore derived from `e.buttons` on every event.
+   */
+  private readonly onPointerMoveOrUp = (e: PointerEvent) => { if (e.pointerType === 'mouse') this.syncButtons(e); };
   private readonly onMouseMove = (e: MouseEvent) => { if (this.locked && (e.movementX || e.movementY)) this.sink.mouseLook(e.movementX, e.movementY); };
   private readonly onWheel = (e: WheelEvent) => {
     if (!this.locked && !isGameSurface(e.target)) return;
@@ -79,7 +77,7 @@ export class DesktopInput {
     const was = this.locked;
     this.locked = document.pointerLockElement === this.root;
     if (was && !this.locked) {
-      this.mouseBits = 0;
+      this.mouseBits = 0; this.armed = 0;
       if (!this.intentionalUnlock && this.attached) this.pause();
       this.intentionalUnlock = false;
     }
@@ -92,7 +90,7 @@ export class DesktopInput {
   attach(): void {
     if (this.attached) return; this.attached = true;
     window.addEventListener('keydown', this.onKeyDown); window.addEventListener('keyup', this.onKeyUp); window.addEventListener('blur', this.onBlur);
-    window.addEventListener('pointerdown', this.onPointerDown); window.addEventListener('pointerup', this.onPointerUp);
+    window.addEventListener('pointerdown', this.onPointerDown); window.addEventListener('pointerup', this.onPointerMoveOrUp); window.addEventListener('pointermove', this.onPointerMoveOrUp);
     window.addEventListener('mousemove', this.onMouseMove); window.addEventListener('wheel', this.onWheel, { passive: true });
     window.addEventListener('contextmenu', this.onContextMenu);
     document.addEventListener('pointerlockchange', this.onLockChange);
@@ -101,12 +99,12 @@ export class DesktopInput {
   detach(): void {
     if (!this.attached) return; this.attached = false;
     window.removeEventListener('keydown', this.onKeyDown); window.removeEventListener('keyup', this.onKeyUp); window.removeEventListener('blur', this.onBlur);
-    window.removeEventListener('pointerdown', this.onPointerDown); window.removeEventListener('pointerup', this.onPointerUp);
+    window.removeEventListener('pointerdown', this.onPointerDown); window.removeEventListener('pointerup', this.onPointerMoveOrUp); window.removeEventListener('pointermove', this.onPointerMoveOrUp);
     window.removeEventListener('mousemove', this.onMouseMove); window.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('contextmenu', this.onContextMenu);
     document.removeEventListener('pointerlockchange', this.onLockChange);
     this.releaseLock();
-    this.locked = false; this.keys.clear(); this.mouseBits = 0; this.latched = 0; this.slot = 0; this.grenade = 0; this.spectate = 0;
+    this.locked = false; this.keys.clear(); this.mouseBits = 0; this.armed = 0; this.mouseMask = 0; this.latched = 0; this.slot = 0; this.grenade = 0; this.spectate = 0;
   }
 
   /** Frees the mouse (modal screens) without the lock-loss pause. */
@@ -155,6 +153,24 @@ export class DesktopInput {
       case 'ArrowLeft': this.spectate = -1; break;
       case 'ArrowRight': this.spectate = 1; break;
     }
+  }
+
+  /** LMB = FIRE (THROW while slot 4 is active, fixed at the press), RMB = SCOPE; rising edges are latched. */
+  private syncButtons(e: PointerEvent): void {
+    const bit = e.button === 0 ? 1 : e.button === 2 ? 2 : 0;
+    let mask = (e.buttons ?? 0) & 3;
+    let prev = this.mouseMask;
+    if (e.type === 'pointerdown') { mask |= bit; prev &= ~bit; }   // a pointerdown is always a fresh press of e.button
+    else if (e.type === 'pointerup') mask &= ~bit;
+    this.mouseMask = mask;
+    const rise = mask & ~prev;
+    this.armed &= mask;
+    if (this.locked && rise) {
+      if (rise & 1) { const local = this.sink.local(); this.fireBit = local && local.activeSlot === 4 ? Btn.THROW : Btn.FIRE; this.latched |= this.fireBit; }
+      if (rise & 2) this.latched |= Btn.SCOPE;
+      this.armed |= rise;
+    }
+    this.mouseBits = (this.armed & 1 ? this.fireBit : 0) | (this.armed & 2 ? Btn.SCOPE : 0);
   }
 
   private pause(): void {

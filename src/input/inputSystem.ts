@@ -31,6 +31,7 @@ export class InputSystem {
   private slot: InputCommand['slot'] = 0; private grenade: InputCommand['grenade'] = 0;
   private buyItem: ItemId | null = null; private spectateDir: -1 | 0 | 1 = 0;
   private attached = false;
+  private paused = false;
   private settings: ControlSettings;
   private layout: TouchLayout;
   private local: SnapLocal | null = null;
@@ -78,6 +79,7 @@ export class InputSystem {
   }
 
   private pullGyro(): void {
+    if (this.paused) return; // the gyro keeps reading while paused; setPaused(false) drops that rotation
     const g = this.gyro.consume();
     if (this.settings.gyro === 'off' || (g.yaw === 0 && g.pitch === 0)) return;
     this.pending.yaw += g.yaw * this.settings.gyroSens;
@@ -153,6 +155,11 @@ export class InputSystem {
     if (this.attached && s.gyro !== 'off') { this.gyro.start(); this.gyro.active = s.gyro === 'always'; } else this.gyro.stop();
   }
   getSettings(): ControlSettings { return this.settings; }
+  /**
+   * True pause (§8.6): the loop still renders, so previewLook() must not pull gyro rotation (nothing would consume
+   * it until resume). The gyro is recentred on both edges so rotation made while paused is never applied.
+   */
+  setPaused(p: boolean): void { if (this.paused === p) return; this.paused = p; this.gyro.recentre(); }
   setTouchVisible(b: boolean): void { this.touch.setUserVisible(b); }
   isTouchVisible(): boolean { return this.touch.userEnabled; }
   gyroAvailable(): boolean { return GyroInput.available(); }
@@ -169,7 +176,7 @@ export class InputSystem {
   detach(): void {
     if (!this.attached) return; this.attached = false;
     this.touch.detach(); this.desktop.detach(); this.gyro.stop();
-    this.latched = 0; this.pending.yaw = 0; this.pending.pitch = 0; this.dragged = false;
+    this.latched = 0; this.pending.yaw = 0; this.pending.pitch = 0; this.dragged = false; this.paused = false;
     this.slot = 0; this.grenade = 0; this.buyItem = null; this.spectateDir = 0;
     Object.assign(this.auto, createAutoState());
   }

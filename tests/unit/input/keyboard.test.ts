@@ -88,6 +88,36 @@ describe('desktop mouse (§7.7)', () => {
     r.canvas.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, pointerType: 'mouse', button: 2, bubbles: true }));
     expect(r.tick().buttons & Btn.SCOPE).toBe(Btn.SCOPE);
   });
+  it('chorded buttons (pointermove carries the 2nd press/release) never leave FIRE or SCOPE stuck', () => {
+    r = rig();
+    setLock(r.canvas);
+    const ev = (type: string, button: number, buttons: number) => r.canvas.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'mouse', button, buttons, bubbles: true }));
+    ev('pointerdown', 0, 1);                      // LMB down
+    expect(r.tick().buttons).toBe(Btn.FIRE);
+    ev('pointermove', 2, 3);                      // RMB down while LMB is held
+    expect(r.tick().buttons).toBe(Btn.FIRE | Btn.SCOPE);
+    ev('pointermove', 0, 2);                      // LMB up while RMB is held
+    expect(r.tick().buttons).toBe(Btn.SCOPE);
+    ev('pointerup', 2, 0);                        // RMB up (last button)
+    expect(r.tick().buttons).toBe(0);
+    expect(r.tick().buttons).toBe(0);
+    ev('pointerdown', 2, 2); ev('pointermove', 0, 3); ev('pointermove', 0, 2); // scoped, then a quick LMB click
+    expect(r.tick().buttons).toBe(Btn.SCOPE | Btn.FIRE); // the latched shot is not dropped
+    expect(r.tick().buttons).toBe(Btn.SCOPE);
+    ev('pointerup', 2, 0);
+    expect(r.tick().buttons).toBe(0);
+  });
+  it('the locking click does not fire even if the button is still held once the lock lands', () => {
+    r = rig();
+    (r.canvas as unknown as { requestPointerLock: () => void }).requestPointerLock = () => undefined;
+    pointer('pointerdown', 1, 400, 200, r.canvas, 'mouse');
+    setLock(r.canvas);
+    pointer('pointermove', 1, 401, 200, r.canvas, 'mouse'); // buttons = 1
+    expect(r.tick().buttons).toBe(0);
+    pointer('pointerup', 1, 401, 200, r.canvas, 'mouse');
+    pointer('pointerdown', 1, 401, 200, r.canvas, 'mouse');
+    expect(r.tick().buttons).toBe(Btn.FIRE);
+  });
   it('losing the lock unexpectedly pauses; B unlocks without pausing', () => {
     r = rig();
     setLock(r.canvas); setLock(null);

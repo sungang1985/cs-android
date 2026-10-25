@@ -322,4 +322,17 @@ describe('sensitivity (§7.4)', () => {
     const c = r.tick();
     expect(c.yaw).toBeCloseTo(0.2, 9); expect(c.pitch).toBeCloseTo(0.1, 9);
   });
+  it('gyro rotation made while paused neither turns the preview nor lands on resume', () => {
+    r = rig({ gyro: 'always', gyroSens: 1, accel: false });
+    r.input.gyro.active = true;
+    r.input.gyro.injectRate(0, 0.5, 0.1);
+    expect(r.tick().yaw).toBeCloseTo(0.05, 9);
+    r.input.setPaused(true);
+    for (let i = 0; i < 30; i++) { r.input.gyro.injectRate(-1, 1, 0.1); expect(r.input.previewLook([], r.local).yaw).toBeCloseTo(0.05, 9); }
+    r.input.setPaused(false);
+    const c = r.tick();
+    expect(c.yaw).toBeCloseTo(0.05, 9); expect(c.pitch).toBeCloseTo(0, 9);
+    r.input.gyro.injectRate(0, 0.5, 0.1);
+    expect(r.tick().yaw).toBeCloseTo(0.1, 9);
+  });
 });

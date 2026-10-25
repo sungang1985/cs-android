@@ -95,7 +95,9 @@ export class Game {
     this.bus.on('screen', () => this.syncTouchVisibility());
     this.bus.on('settingsChanged', (s) => this.applySettings(s));
     this.bus.on('layoutChanged', (l) => { this.layout = cloneLayout(l); this.input.setLayout(this.layout); this.hud.setLayout(this.layout); persist.set('layout', this.layout); });
-    bridge.onBack(() => this.onBack());
+    bridge.onBack(() => { const r = this.onBack(); if (r === 'handled') this.audio.ui('back'); return r; });
+    opts.uiRoot.addEventListener('click', (e) => this.uiClick(e.target), true); // capture: buttons stop propagation
+    this.audio.arm(); // first launch boots straight into onboarding: unlock on the first gesture (§9.3)
     bridge.onLifecycle((s) => { if (s === 'pause') { if (this.inMatch) this.pause(true); this.audio.suspend(); } else this.audio.resume(); });
     window.addEventListener('resize', () => this.onResize());
     this.onResize();
@@ -152,7 +154,7 @@ export class Game {
 
   pause(p: boolean): void {
     if (!this.inMatch || this.paused === p) return;
-    this.paused = p; this.loop.pause(p);
+    this.paused = p; this.loop.pause(p); this.input.setPaused(p);
     if (p) { this.input.releasePointer(); this.screens.show('pause', { canBuy: this.next.local.canBuy === 1 }); } else this.screens.hide('pause');
   }
   get isPaused(): boolean { return this.paused; }
@@ -218,7 +220,7 @@ export class Game {
         const human = sim.state.players.find((p) => p.id === sim.state.humanId)!;
         const result = d.result === 'draw' ? 'draw' : d.result === human.team ? 'win' : 'lose';
         this.stats?.commit(result, this.settings.controls.aimAssist);
-        this.loop.pause(true); this.paused = true;
+        this.loop.pause(true); this.paused = true; this.input.setPaused(true);
         this.screens.hide('roundEnd');
         if (this.cfg) this.screens.show('matchEnd', { result: d.result, humanTeam: human.team, scoreT: d.scoreT, scoreCT: d.scoreCT, mvp: sim.state.round.mvp, personal: { ...human.stats, accuracy: human.stats.shots ? human.stats.hits / human.stats.shots : 0, hsPercent: human.stats.kills ? human.stats.headshots / human.stats.kills : 0 }, assistLevel: this.settings.controls.aimAssist, cfg: this.cfg });
         break;
@@ -249,6 +251,13 @@ export class Game {
       case 'marker': this.renderer.setMarker((payload as { x: number; y: number; z: number } | null) ?? null); break;
       case 'onboardingDone': persist.update('onboarding', { done: true }, { done: false, assistChosen: false }); break;
     }
+  }
+
+  /** UI click feedback (§9.3): back buttons → ui_back, other buttons → ui_tap; buy tiles sound via the sim's buy event. */
+  private uiClick(target: EventTarget | null): void {
+    const b = (target as Element | null)?.closest?.('button');
+    if (!b || b.closest('.buy-tile, .buy-preset')) return;
+    this.audio.ui(b.classList.contains('btn-back') ? 'back' : 'tap');
   }
 
   private onBack(): 'handled' | 'exit' | 'none' {

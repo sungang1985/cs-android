@@ -27,13 +27,15 @@ export interface AudioEngineOptions {
 }
 
 interface Voice { src: AudioBufferSourceNode; nodes: AudioNode[]; priority: number; ended: boolean; id: BankId }
-interface PlayOpts { variant?: number; gain: number; priority: number; pos?: Vec3 | null; lowpass?: number | null; maxDistance?: number; refDistance?: number; bus?: BusId; dedupe?: boolean }
+interface PlayOpts { variant?: number; gain: number; priority: number; pos?: Vec3 | null; lowpass?: number | null; maxDistance?: number; refDistance?: number; bus?: BusId; dedupe?: boolean; dedupeKey?: string }
 
 const TICKS = 60;
-/** How far the bomb-beep clock may run ahead of the last known sim tick (covers quiet frames, bounds pauses). */
+/** How far the bomb-beep clock may run ahead of the last known event tick when syncTick() is never called (covers quiet frames). */
 const MAX_EXTRAPOLATE_SEC = 0.5;
 const BEEP_MAX_DISTANCE = 40;
 const SOURCE_LIFT = 0.3;
+/** Gesture events that may unlock/resume the context (touch activation lands on pointerup/touchend, not pointerdown). */
+const RETRY_EVENTS = ['pointerdown', 'pointerup', 'touchend', 'keydown'] as const;
 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -53,6 +55,8 @@ export class AudioEngine {
   private teamExplicit = false;
   private localId = 1;
   private simTick = 0; private simTickAt = 0;
+  /** syncTick() drives the beep clock exactly: no wall-clock extrapolation (a paused sim must stay silent). */
+  private synced = false;
   private beep: { explodeTick: number; nextTick: number; pos: Vec3 } | null = null;
   private ring: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   private ambient: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
@@ -63,7 +67,12 @@ export class AudioEngine {
   onProgress: ((done: number, total: number) => void) | null = null;
 
   private readonly onVisibility = () => { if (typeof document === 'undefined') return; if (document.hidden) this.suspend(); else this.resume(); };
-  private readonly onRetry = () => { if (this.ctx && this.ctx.state !== 'running') void this.ctx.resume().catch(() => undefined); if (this.ctx?.state === 'running') this.disarmRetry(); };
+  private readonly onRetry = () => {
+    const ctx = this.ctx;
+    if (!ctx) { void this.unlock().then(() => { if (this.unlocked) this.disarmRetry(); }); return; }
+    if (ctx.state === 'running') { this.disarmRetry(); return; }
+    if (ctx.state !== 'closed') void ctx.resume().then(() => { if (ctx.state === 'running') this.disarmRetry(); }, () => undefined);
+  };
 
   constructor(opts: AudioEngineOptions = {}) {
     this.bank = opts.bank ?? null;
@@ -91,6 +100,11 @@ export class AudioEngine {
     if (this.bankPromise) await this.bankPromise;
     if (this.ambientWanted) this.ensureAmbient();
   }
+  /**
+   * Unlocks on the first user gesture anywhere (§9.3 "retried on first touch"): first launch goes straight into the
+   * onboarding training match without a Play tap. Idempotent; the listeners go away once the context runs.
+   */
+  arm(): void { if (!this.unlocked) this.armRetry(); }
   get unlocked(): boolean { return this.ctx?.state === 'running'; }
   get ready(): boolean { return !!this.ctx && !!this.bank && !!this.buses; }
   suspend(): void { if (this.ctx && this.ctx.state === 'running') void this.ctx.suspend().catch(() => undefined); }
@@ -105,7 +119,7 @@ export class AudioEngine {
   /** The human's team for round win/lose stingers (call on match start and after the half swap). */
   setLocalTeam(team: Team | null): void { this.localTeam = team; this.teamExplicit = team !== null; }
   /** Optional: the current sim tick (exact bomb-beep timing; otherwise extrapolated from event ticks). */
-  syncTick(tick: number): void { this.noteTick(tick); this.advanceBeep(tick); }
+  syncTick(tick: number): void { this.synced = true; this.noteTick(tick); this.advanceBeep(tick); }
 
   setVolumes(v: { master: number; sfx: number; ui: number }): void { this.volumes = { ...v }; this.applyVolumes(); }
   getVolumes(): { master: number; sfx: number; ui: number } { return this.volumes; }
@@ -123,7 +137,7 @@ export class AudioEngine {
         L.setPosition(l.pos.x, l.pos.y, l.pos.z); L.setOrientation(l.fwd.x, l.fwd.y, l.fwd.z, l.up.x, l.up.y, l.up.z);
       }
     }
-    if (this.beep) this.advanceBeep(this.estimateTick());
+    if (this.beep && !this.synced) this.advanceBeep(this.estimateTick());
   }
 
   // ───────── events ─────────
@@ -221,7 +235,9 @@ export class AudioEngine {
     if (!plan.play) return;
     if (plan.occlusionTest && this.world) plan = applyOcclusion(plan, this.world.lineOfSight(this.listener.pos, { x: d.pos.x, y: d.pos.y + SOURCE_LIFT, z: d.pos.z }));
     const variant = variantFor(tick, d.player, this.bank!.variants(d.id));
-    this.play(d.id, { variant, gain: plan.gain, priority: plan.priority, pos: plan.panned ? d.pos : null, lowpass: plan.lowpass, maxDistance: plan.maxDistance });
+    // The 25 ms same-id skip is for bots spraying: the player's own (unpanned) sounds are deduped only among themselves.
+    const own = !plan.panned && d.player !== 0 && d.player === this.localId;
+    this.play(d.id, { variant, gain: plan.gain, priority: plan.priority, pos: plan.panned ? d.pos : null, lowpass: plan.lowpass, maxDistance: plan.maxDistance, dedupeKey: own ? `${d.id}#own` : undefined });
     if (d.id === 'he_explode' && plan.dist < EAR_RING_RANGE) this.startRing(2, 3500 / 4000);
   }
 
@@ -232,7 +248,7 @@ export class AudioEngine {
     if (!ctx || !bank || !buses || ctx.state !== 'running') return null;
     const buf = bank.get(id, o.variant ?? 0);
     if (!buf) return null;
-    if (o.dedupe !== false && !this.dedupe.allow(id, ctx.currentTime)) return null;
+    if (o.dedupe !== false && !this.dedupe.allow(o.dedupeKey ?? id, ctx.currentTime)) return null;
     this.reapVoices();
     if (this.voices.length >= VOICE_LIMIT) {
       const i = pickVictim(this.voices, o.priority);
@@ -311,11 +327,11 @@ export class AudioEngine {
   private armRetry(): void {
     if (this.retryArmed || typeof window === 'undefined') return;
     this.retryArmed = true;
-    window.addEventListener('pointerdown', this.onRetry, true); window.addEventListener('keydown', this.onRetry, true);
+    for (const t of RETRY_EVENTS) window.addEventListener(t, this.onRetry, true);
   }
   private disarmRetry(): void {
     if (!this.retryArmed) return;
     this.retryArmed = false;
-    window.removeEventListener('pointerdown', this.onRetry, true); window.removeEventListener('keydown', this.onRetry, true);
+    for (const t of RETRY_EVENTS) window.removeEventListener(t, this.onRetry, true);
   }
 }
