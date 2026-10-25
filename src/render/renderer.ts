@@ -64,7 +64,7 @@ export class GameRenderer {
   private readonly shotCount = new Map<number, number>();
   private readonly lastShotDir = new Map<number, Vec3>();
   private lastYaw = NaN; private lastPitch = 0;
-  private aliveYaw = 0; private alivePitch = 0;
+  private aliveYaw = 0; private alivePitch = 0; private viewYaw = 0;
   private menu = false; private menuRaf = 0; private menuLast = 0; private menuFrame = 0;
   private menuSnap: RenderSnapshot | null = null;
   private dio: MapLike | null = null;
@@ -91,6 +91,10 @@ export class GameRenderer {
   get webgl2(): boolean { return this.gl !== null; }
   getQuality(): QualityPreset { return this.quality; }
   getFov(): number { return this.fov; }
+  /** Current vertical FOV incl. the AWP zoom (20° / 10°) — for the HUD crosshair projection while scoped. */
+  getEffectiveFov(): number { return this.rig.fov; }
+  /** Yaw of the camera actually shown (spectated player / kill-cam included) — for the radar while dead. */
+  getViewYaw(): number { return this.viewYaw; }
 
   // ───────── quality-dependent world ─────────
   private buildWorld(): void {
@@ -241,6 +245,7 @@ export class GameRenderer {
       this.rig.lookAt(this.eye, this.tgt, dt);
       camYaw = this.aliveYaw;
     }
+    this.viewYaw = camYaw;
     // effects
     if (w.muzzleLight && w.muzzleLightFrames-- <= 0) w.muzzleLight.intensity = 0;
     w.tracers.update(dt); w.flashes.update(); w.booms.update(dt);
