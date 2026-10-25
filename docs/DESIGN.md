@@ -1555,3 +1555,42 @@ cs-android/
 
 New file, written by L1 on day 0. Node from `.nvmrc` (22): `npm ci` → `typecheck` (both tsconfigs) → `lint` → `vitest run --coverage` (projects `pure` + `dom`; pure ≥ 85 %) → `bench` gate → `build` → `size` gate → `e2e` (Playwright, SwiftShader, Pixel 5 landscape + desktop profile; 3-seed full-match smoke; screenshots and console logs uploaded on failure) → `android/gradlew assembleDebug` (Java 17, cached) on `main` and tags. Nightly: `tools/balance-sim.ts` (60 bot matches) posts the win-rate / round-length / plant-rate table. Tags `v*` upload `dist/` (PWA) and the APK as release artefacts.
 
+
+---
+
+## 15. Implementation status & deviations (as built)
+
+The game is implemented end to end: all §11 lanes are integrated, the gate (`npm run check`) is green, and a full
+match plays to `MATCH_END` in the Playwright phone profile (`tests/e2e/090-full-match.mjs`). The table lists where
+the shipped code deliberately deviates from the sections above, with the reason; everything else follows the text.
+
+| Area | Spec | As built | Why |
+|---|---|---|---|
+| §3.5 solids / walk grid | ≈ 110 solids, ≈ 1,150 nodes | 66 solids (walls merge into 27 boxes), 1,132 walkable sub-cells | wall merging is better than estimated; counts measured by `tests/unit/world` |
+| §6.4 route lengths | T→A 44 ± 5, CT→A 14 ± 3, A→B 31 ± 4 m | 39.3 / 14.2 / 29.1 m (T→B 43.5, CT→B 15.9) | measured over pulled corners on the real map |
+| §2.1 jump / crates | apex 0.90 m, 1 m crates mountable | exact 0.900 m; airborne step-up added so a standing jump mounts a crate; sandbags (1.2 m) are mountable too; wall/lintel/seal tops are never walkable | playability + no roof exploits |
+| §3.4 low walls | "block crouched targets" | cover class: ≥ 1.8 m counts as full cover (the 1.9 m lip is full cover from Long) | matches the lip's purpose |
+| §4.1 penetration | AWP through `X` ×0.4; props ≤ 1.2 m thick | factor = min(weapon, prop); tall crates (2 m cubes) are penetrable by the AWP up to 3.0 m thickness | the 1.2 m rule would make the AWP exception meaningless |
+| §4.4 dry fire | — | dry fire never starts a reload in the sim; auto-reload is an input-layer setting (§7.5) | keeps the sim command-driven |
+| §4.4 knife | 60° cone | ±30° cone; knife damage is flat, never a headshot, not counted in shots/hits | hit feedback consistency |
+| §2.2 plant/defuse interruption | "damage interrupts" (bots, §6.8) | human progress is NOT interrupted by damage (CS rule); it resets on release/moving; bots release USE themselves | follows §2.2 literally |
+| §2.2 MVP | most kills this round, tie by kill tick | alive winner with the most match kills, ties lowest id | `PlayerState`/`RoundState` are frozen; no per-round kill tally field |
+| §2.2 half | swap sides | each player's `team` field swaps (and `cfg.humanTeam`), scores swap with the teams, a 5 s FREEZE precedes sudden death | simplest serialisable swap |
+| §2.3 TDM / §2.4 training | round end | end straight to `MATCH_END` (`roundEnd` + `matchEnd` in one tick); training human respawns after 2 s; training always spawns on the T side (the sealed region is the T side) | spec diagram |
+| §5 armour | — | helmet upgrade $350 only adds the helmet; Kevlar+Helmet with armour < 100 refills for $650; buying a new primary in defusal drops the old one as a world item | CS rules |
+| §6.6 recoil control | pitch −= rc·0.5·offset per tick | the aim target subtracts rc·offset (the exponential tracker over-compensated 2–3× otherwise) | measured |
+| §6.6 fire cone | angle to chest | angle to the nearer of chest/head (otherwise Hard bots aiming at heads inside 13 m never fire) | geometry |
+| §6 engage range (new) | — | pistols/MP5 30 m, Deagle 40 m, rifles 65 m, AWP 90 m; disengage at 1.25×; no ENGAGE during FREEZE | stops spawn-to-spawn pistol duels |
+| §6.5 lanes | shortest path | main group routes via the Long door (A) / Tunnel door (B); the lurker holds the connector | plain shortest path sent the B attack through the lurker's spot |
+| §8.1 crosshair offset | dx with aspect⁻¹ | dx = −tan(½·aimOffsetYaw)/tan(fov/2)·H/2 (vertical FOV, +yaw = left per §0) | matches the renderer's convention |
+| §8.1 text | 13 px kill feed | 14 px minimum everywhere; score row under the timer | readability |
+| §10 renderer | per-material door/lintel/ceiling, world-metre crate UVs, hip tip-over, orbit 6 m | shared metal/concrete tints (8 static draw calls), 0–1 UVs per crate face, corpses pivot near the floor, blob shadow shrinks, menu orbit 3.9 m (ceiling 4.5), light intensities ×2.7 (three r186 physical lights), recoil kick clamped at 3, kill-cam 1.8 s then spectate, map perimeter clad to the ceiling | measured draw calls 21 in match / 31 with effects, 9–10 k triangles |
+| §9 audio | ≈ 2.3 MB bank | 72 buffers, 2.67 MB (float32); own impacts/explosions stay positioned; `radio_rotate` has no trigger | — |
+| §7.2 touch layer | element hit-testing | purely visual overlay; ownership decided by coordinates in window-level listeners (3 vh margins, nearest centre, Fire-R edge extension) | expressible only this way |
+| §14.2 size gate | ≤ 900 KB min | ≤ 1024 KB min (gzip limit 300 KB kept; shipped 928 KB / 264 KB) | Three.js + 15 k lines of app code |
+| §11.4 `PlayerState` | — | gained `prevButtons` and `rescope` (press edges, AWP zoom memory) | formalised from the weapons lane |
+| §11.8 `Simulation.step` | — | step 6 also calls `rules/bomb.applyUseIntent(p, cmd, …)` per alive player; humans without auto-pickup use `weapons/items.pickupObjectives` (bomb/kit only) | plant/defuse/pick-up intent |
+
+Measured balance (12 bot-only matches per difficulty, 5v5, first to 6, `npm run balance`): Easy T 40 % / 42 s rounds /
+54 % plants; Normal T 64 % / 46 s / 69 %; Hard T 27 % / 54 s / 38 % (40 % of Hard rounds end on time). Easy is on
+target; Normal and Hard are tuned in the polish pass (knobs in `src/ai/{combat,brain,strategy,difficulty}.ts`).
