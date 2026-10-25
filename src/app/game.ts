@@ -181,10 +181,15 @@ export class Game {
       }
       case 'roundPhase': {
         const d = e.data as SimEvents['roundPhase'];
-        if (d.phase === 'FREEZE') { this.screens.hide('roundEnd'); this.loop.timeScale = 1; this.spotted = []; if (this.cfg && this.cfg.mode === 'defusal') persist.set('match', { cfg: this.cfg, state: sim.serialize(), savedAt: this.now() }); }
+        if (d.phase === 'FREEZE') {
+          this.screens.hide('roundEnd'); this.loop.timeScale = 1; this.spotted = [];
+          const me = sim.state.players.find((p) => p.id === sim.state.humanId); if (me) this.input.setLook(me.yaw, 0); // spawn facing
+          if (this.cfg && this.cfg.mode === 'defusal') persist.set('match', { cfg: this.cfg, state: sim.serialize(), savedAt: this.now() });
+        }
         if (d.phase === 'LIVE') this.screens.hide('roundEnd');
         break;
       }
+      case 'respawn': { const d = e.data as SimEvents['respawn']; if (d.player === sim.state.humanId) { const me = sim.state.players.find((p) => p.id === d.player); if (me) this.input.setLook(me.yaw, 0); } break; }
       case 'matchEnd': {
         const d = e.data as SimEvents['matchEnd'];
         persist.remove('match');
@@ -209,7 +214,7 @@ export class Game {
       case 'resume': this.pause(false); break;
       case 'quit': this.showMain(); break;
       case 'menu': this.showMain(); break;
-      case 'rematch': if (this.cfg) this.startMatch({ ...this.cfg, seed: this.cfg.seed + 1 }); break;
+      case 'rematch': if (this.cfg) { const last = persist.get<Partial<MatchConfig> | null>('lastSettings', null); const team = (last?.humanTeam as Team | 'random' | undefined) ?? this.cfg.humanTeam; this.startMatch({ ...this.cfg, humanTeam: team === 'random' ? this.cfg.humanTeam : team, seed: this.cfg.seed + 1 }); } break;
       case 'changeMode': this.stopMatch(); for (const s of this.screens.visible()) this.screens.hide(s); this.screens.show('mode', { last: this.cfg }); break;
       case 'drop': this.input.press(Btn.DROP); this.pause(false); break;
       case 'openBuy': if (this.sim && this.cfg) this.buyMenu.open(this.next.local, this.cfg.humanTeam); break;

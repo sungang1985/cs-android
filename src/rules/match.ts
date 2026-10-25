@@ -1,4 +1,9 @@
-/** Match creation (§2, §6.1, §11.3): players, bots, spawns, blackboards. Basic DAY-0 version; L4 completes. */
+/**
+ * Match creation (§2, §6.1, §11.3): players, bots, spawns, blackboards, training targets.
+ * Ids: human = 1 (nameKey 'bot.player'), friendly bots 2…n, enemy bots n+1…2n (n = cfg.teamSize), then targets.
+ * Training creates only the human + the targets of map.training. `state.cfg` IS the caller's cfg object (not a copy):
+ * the half-time swap writes cfg.humanTeam, which the app's own reference then sees too.
+ */
 import { v3 } from '../core/math';
 import type { RngStreams } from '../core/rng';
 import type { WorldState, MatchConfig, BotProfile, Team, Blackboard, PlayerState, BotMemory } from '../sim/state';
@@ -7,6 +12,8 @@ import { createPlayer, createBotMemory, enemyTeam } from '../sim/entities';
 import { MODES } from './modes';
 
 export const BOT_NAME_KEYS: readonly string[] = ['wang', 'qiang', 'lei', 'fang', 'hu', 'lin', 'song', 'yu', 'bao', 'kai', 'ming', 'tao'];
+/** i18n key of the human's display name (「你」 / "You"). */
+export const HUMAN_NAME_KEY = 'bot.player';
 
 export function defaultProfiles(cfg: MatchConfig): BotProfile[] {
   const n = cfg.teamSize * 2 - 1;
@@ -35,7 +42,7 @@ export function createMatch(cfg: MatchConfig, map: CompiledMap, profiles: BotPro
   };
   const human: Team = cfg.humanTeam, enemy = enemyTeam(human);
   const n = cfg.mode === 'training' ? 1 : cfg.teamSize;
-  const money = mode.economy ? 800 : 0;
+  const money = mode.startMoney;
   const mk = (team: Team, isBot: boolean, nameKey: string, slot: number, profile?: BotProfile): PlayerState => {
     const sp = map.spawns[team][slot % map.spawns[team].length];
     const p = createPlayer(state.nextId++, team, isBot, nameKey, sp.pos, sp.yaw, money);
@@ -43,7 +50,7 @@ export function createMatch(cfg: MatchConfig, map: CompiledMap, profiles: BotPro
     if (isBot && profile) { const mem: BotMemory = createBotMemory(p.id, profile, p.pos); state.bots.push(mem); }
     return p;
   };
-  mk(human, false, 'player', 0);
+  mk(human, false, HUMAN_NAME_KEY, 0);
   let pi = 0;
   for (let i = 1; i < n; i++) mk(human, true, profs[pi].nameKey, i, profs[pi++]);
   if (cfg.mode !== 'training') for (let i = 0; i < n; i++) mk(enemy, true, profs[pi].nameKey, i, profs[pi++]);
