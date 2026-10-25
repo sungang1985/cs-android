@@ -261,6 +261,8 @@ img { -webkit-user-drag: none; }
 /* ───────── HUD (§8.1) ───────── */
 .hud { position: absolute; top: var(--sa-t); right: var(--sa-r); bottom: var(--sa-b); left: var(--sa-l); pointer-events: none; color: var(--text); font-size: 16px; text-shadow: var(--outline); }
 .hud .interactive, .hud .hud-btn { pointer-events: auto; }
+/* interactive HUD groups sit above an input-lane touch layer with z-index < 20 (and below .buy 25 / .screens 30) */
+.hud-top, .hud-spectator { z-index: 20; }
 .hud-btn { border: 1px solid rgba(255, 255, 255, 0.35); background: rgba(0, 0, 0, 0.5); color: var(--text); cursor: pointer; text-shadow: var(--outline); }
 .hud-btn:active { background: rgba(255, 255, 255, 0.2); }
 .hud-flash { position: fixed; inset: 0; background: #fff; opacity: 0; transition: opacity 60ms linear; }
