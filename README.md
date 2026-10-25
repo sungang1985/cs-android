@@ -98,11 +98,26 @@ npm run lint         # 架构边界检查
 npm test             # 单元测试（node + jsdom）
 npm run bench        # 模拟层吞吐基准（10,000 tick < 2.5 s）
 npm run build        # 生产构建 → dist/
-npm run size         # 体积门槛（≤ 900 KB / ≤ 300 KB gzip）
+npm run size         # 体积门槛（≤ 1 MB 压缩前 / ≤ 300 KB gzip）
 npm run e2e          # Playwright（Pixel 5 横屏触屏配置，软件 WebGL）
 npm run check        # 以上全部
-npm run golden:update  # 玩法改动后更新黄金哈希
+npm run golden:update  # 玩法改动后更新黄金哈希（种子 42、14,400 tick 的世界状态哈希）
+npm run balance      # 机器人对战平衡统计（每档难度 N 场 5v5 全机器人爆破，默认 20 场）
 ```
+
+测试概况：约 50 个 vitest 文件、500+ 用例（纯模拟层 node 项目 + jsdom UI 项目），外加 9 个 Playwright 端到端场景：
+
+| 场景 | 覆盖 |
+|---|---|
+| `010-boot` | 页面加载、拿到 WebGL2、中文主菜单可见、无控制台报错 |
+| `020-match-smoke` | 用测试钩子开一局爆破，同步步进 600 tick，回合阶段推进 |
+| `030-weapons` | 训练场：给 AK，按住开火 1 s ≈ 10 发，换弹恢复弹匣 |
+| `040-rules` | 人类 T 持 C4 在 A 点安放 → 35 s 后爆炸 → T 胜、比分 1:0、金钱结算 |
+| `060-render` | 主菜单场景、比赛帧的绘制预算（≤ 60 draw calls、≤ 80 k 三角形）、特效不报错 |
+| `070-touch` | 合成触摸事件：浮动摇杆移动、拖动视角转 yaw、Fire-R 按住开火、视角区点按单发 |
+| `071-audio` | 真实 WebAudio：解锁并合成音库（≈ 72 个缓冲）、空间化世界音效、UI 音、环境循环 |
+| `080-ui` | 各界面 DOM 截图、EN 切换、设置跨刷新持久化、购买流程、暂停 / 计分板 / 旁观 / 结算 / 引导、竖屏门、无横向溢出、文本最小尺寸 |
+| `090-full-match` | 三个种子同步跑完整场比赛直至 `MATCH_END`，无异常，生涯统计落盘 |
 
 端到端测试通过 `?test=1` 暴露 `globalThis.__cs` 调试钩子（开局、同步步进、冻结机器人、传送、给武器、读状态 / 哈希等），见 `src/app/testHooks.ts`。
 

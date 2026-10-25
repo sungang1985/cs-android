@@ -20,6 +20,8 @@ import { copyV, distXZ, memOf, teamPlayers, ticks, liveStartTick, liveElapsed, i
 export const STRATEGY = {
   pA: 0.55, flipAfterLoss: 0.3, rushWaitSec: { easy: 10, normal: 4, hard: 0 } as Record<Difficulty, number>,
   pushAfterSec: 45, replanTicks: 60, campRange: [5, 7] as [number, number],
+  /** CT rotation on lane sightings: ≥ laneSightEnemies distinct enemies seen (confidence 1) in one site's lanes within laneSightTicks. */
+  laneSightEnemies: 2, laneSightTicks: 180,
 } as const;
 
 type Site = 'a' | 'b';
@@ -174,10 +176,13 @@ function goalFor(info: TeamInfo, p: PlayerState, ctx: ThinkContext): Goal {
 }
 
 /** CT default split (§6.5): 2 A / 2 B / 1 mid (3v3 1/1/1, 2v2 1/1) by team slot (id order incl. the human). */
-function defaultCtGoal(ctx: ThinkContext, info: TeamInfo, p: PlayerState): Goal {
+function defaultRole(info: TeamInfo, q: PlayerState): Site | 'mid' {
   const n = info.members.length;
   const roles: (Site | 'mid')[] = n >= 5 ? ['a', 'a', 'b', 'b', 'mid'] : n === 4 ? ['a', 'b', 'a', 'mid'] : n === 3 ? ['a', 'b', 'mid'] : ['a', 'b'];
-  const roleOf = (q: PlayerState) => roles[info.members.indexOf(q) % roles.length];
+  return roles[info.members.indexOf(q) % roles.length];
+}
+function defaultCtGoal(ctx: ThinkContext, info: TeamInfo, p: PlayerState): Goal {
+  const roleOf = (q: PlayerState) => defaultRole(info, q);
   const role = roleOf(p);
   const spots = spotsFor(ctx, 'CT', role);
   if (!spots.length) { const s: Site = role === 'b' ? 'b' : 'a'; return { kind: 'site', site: s, pos: copyV(ctx.map.plantSpots[s]) }; }
@@ -248,10 +253,29 @@ export function requestGoal(ctx: ThinkContext, self: PlayerState): Goal {
   return cloneGoal(g);
 }
 
-/** A confidence-1 sighting inside a site area (CT rotation trigger). */
+/** Lanes that lead to one site only (§3.1): Long / A ramp / A connector → A, Tunnel / B door / B connector → B. Mid is ambiguous. */
+const LANE_SITE: Partial<Record<AreaId, Site>> = { long: 'a', a_ramp: 'a', a_ramp_ct: 'a', a_connector: 'a', tunnel: 'b', tunnel_window: 'b', b_door_ct: 'b', b_connector: 'b' };
+
+/**
+ * CT rotation trigger (§6.5, as built): the most recent confidence-1 sighting inside a site area, or ≥ laneSightEnemies
+ * distinct enemies seen (confidence 1, within laneSightTicks) in the lanes that only lead to that site — so a stacked
+ * execute is called while it is still in Long/Tunnel instead of when the holders are already dying.
+ */
 function sightedSite(ctx: ThinkContext, bb: Blackboard): Site | null {
   let best: Site | null = null, bt = -1;
-  for (const e of bb.lastEnemySeen) { if (e.confidence !== 1 || e.tick <= bt) continue; const s = siteOf(ctx, e.pos); if (s) { best = s; bt = e.tick; } }
+  const laneIds: Record<Site, number[]> = { a: [], b: [] }, laneTick: Record<Site, number> = { a: -1, b: -1 };
+  for (const e of bb.lastEnemySeen) {
+    if (e.confidence !== 1) continue;
+    const s = siteOf(ctx, e.pos);
+    if (s) { if (e.tick > bt) { best = s; bt = e.tick; } continue; }
+    if (ctx.tick - e.tick > STRATEGY.laneSightTicks) continue;
+    const area = ctx.map.areaAt(e.pos.x, e.pos.z);
+    const lane = area ? LANE_SITE[area] : undefined;
+    if (!lane) continue;
+    if (!laneIds[lane].includes(e.id)) laneIds[lane].push(e.id);
+    if (e.tick > laneTick[lane]) laneTick[lane] = e.tick;
+  }
+  for (const s of ['a', 'b'] as const) if (laneIds[s].length >= STRATEGY.laneSightEnemies && laneTick[s] > bt) { best = s; bt = laneTick[s]; }
   return best;
 }
 

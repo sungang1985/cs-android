@@ -7,10 +7,10 @@
  */
 import { v3, v3dot, v3len, v3sub, dirFromYawPitch, clamp, wrapAngle, DEG, type Vec3 } from '../core/math';
 import type { ThinkContext } from '../sim/brain';
-import { Btn, type PlayerState, type BotMemory, type InputCommand, type Slot } from '../sim/state';
+import { Btn, DT, type PlayerState, type BotMemory, type InputCommand, type Slot } from '../sim/state';
 import { WEAPONS, type WeaponDef } from '../weapons/defs';
 import { activeWeaponId, activeSlotState } from '../weapons/inventory';
-import { eyePos, horizontalSpeed } from '../world/movement';
+import { eyePos, horizontalSpeed, MOVE } from '../world/movement';
 import type { DifficultyCfg } from './difficulty';
 import { chestPos, headPos, distXZ, player, teammateWithin, ticks, copyV } from './common';
 import { isRecognised, targetVisibleNow, type Perception } from './perception';
@@ -20,6 +20,8 @@ export const COMBAT = {
   pistolRate: 0.7, awpZoomTicks: 15, awpBoltTicks: 90, awpAimDeg: 0.5, knifeRange: 3, pistolSwitchRange: 6,
   peekP: 0.35, peekTicks: Math.round((1.5 / 4.3) * 60), crouchP: 0.4, counterStopSpeed: 0.3, strafeFlip: [18, 30] as [number, number],
   heRange: 15, heMinDist: 4, flashRange: 12, throwHoldTicks: 6, flashLookAwayTicks: 96, heRecoverTicks: 20,
+  /** engageRange() table, metres: the longest duel a bot starts with that gun class (the mid sightline is ~40 m). */
+  engageRange: { sniper: 90, rifle: 65, deagle: 40, melee: 20, other: 30 },
 } as const;
 /** mem.burstLeft codes while a grenade intent runs outside combat (it is a burst counter only in ENGAGE). */
 export const THROW = { he: -1, flash: -2, after: -3, used: -9 } as const;
@@ -133,12 +135,21 @@ function strafe(ctx: ThinkContext, self: PlayerState, mem: BotMemory, cfg: Diffi
   if (cfg.strafe !== 'counter') return;
   if (mem.burstLeft > 0 || counter) {
     if (mem.peek.active && mem.burstLeft > 0) cmd.buttons |= Btn.CROUCH;
-    if (horizontalSpeed(self) > COMBAT.counterStopSpeed) setWorldMove(cmd, -self.vel.x, -self.vel.z, 1);
+    counterStrafe(self, cmd);
     return;
   }
   if (mem.peek.dir === 0) return;                     // no ADAD before the first burst
   if (tick >= mem.peek.untilTick) { mem.peek.dir = -Math.sign(mem.peek.dir) || 1; mem.peek.untilTick = tick + ctx.rng.int(COMBAT.strafeFlip[0], COMBAT.strafeFlip[1]); }
   cmd.moveX = Math.sign(mem.peek.dir);
+}
+
+/**
+ * Counter-strafe input: full opposite input while one ground-accel step cannot overshoot past the stop band
+ * (speed > max(counterStopSpeed, step / 2)), then coast on friction. A full-input brake below that bounces around
+ * the stop speed (0.30 → 0.37 → 0.30 …) and never settles, which held every Hard first shot hostage.
+ */
+export function counterStrafe(self: PlayerState, cmd: InputCommand): void {
+  if (horizontalSpeed(self) > Math.max(COMBAT.counterStopSpeed, MOVE.groundAccel * DT * 0.5)) setWorldMove(cmd, -self.vel.x, -self.vel.z, 1);
 }
 
 /** Blind (§6.3): spray toward the last known target direction (or straight ahead) while the flash lasts. */
@@ -193,8 +204,8 @@ export function weaponUpkeep(ctx: ThinkContext, self: PlayerState, mem: BotMemor
 export function engageRange(self: PlayerState): number {
   const inv = self.inv;
   const id = inv.primary && inv.primary.mag + inv.primary.reserve > 0 ? inv.primary.id : inv.pistol.mag + inv.pistol.reserve > 0 ? inv.pistol.id : 'knife';
-  const t = WEAPONS[id].type;
-  return t === 'sniper' ? 90 : t === 'rifle' ? 65 : id === 'deagle' ? 40 : t === 'melee' ? 20 : 30;
+  const t = WEAPONS[id].type, r = COMBAT.engageRange;
+  return t === 'sniper' ? r.sniper : t === 'rifle' ? r.rifle : id === 'deagle' ? r.deagle : t === 'melee' ? r.melee : r.other;
 }
 
 /** Plant/defuse courage rule (§6.7): Easy aborts on any sighting, Normal if the enemy is < 10 m, Hard only when uncovered. */

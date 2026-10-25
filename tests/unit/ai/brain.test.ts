@@ -3,10 +3,12 @@ import { describe, it, expect } from 'vitest';
 import { createBotBrain, decide, ecoDecision, nextBuy } from '@/ai/brain';
 import { planTeam } from '@/ai/strategy';
 import { DIFFICULTY } from '@/ai/difficulty';
-import { THROW, burstTicks } from '@/ai/combat';
+import { THROW, burstTicks, counterStrafe, COMBAT } from '@/ai/combat';
+import { movePlayer, horizontalSpeed } from '@/world/movement';
+import { STRATEGY } from '@/ai/strategy';
 import { v3, DEG } from '@/core/math';
 import { Rng } from '@/core/rng';
-import { Btn, type BotStateId, type BotMemory, type PlayerState, type InputCommand } from '@/sim/state';
+import { Btn, cloneCommand, IDLE_COMMAND, type BotStateId, type BotMemory, type PlayerState, type InputCommand } from '@/sim/state';
 import type { SimEnvelope } from '@/sim/events';
 import { makeFixture, botsOf, playersOf, place, setLive, setTick, parkOthers, lookAt, stubPer, finiteCommand, nextDecisionTick, depot, type Fixture } from './helpers';
 
@@ -219,6 +221,28 @@ describe('strategy', () => {
       else expect(sites.filter((s) => s === 'b').length).toBeLessThan(sites.length);
     }
   });
+  it('two enemies seen in Long within 3 s rotate CTs to A; one alone does not (Mid never)', () => {
+    const f = makeFixture({ humanTeam: 'T', difficulty: 'normal' }); setTick(f, 1000); setLive(f, 15);
+    planTeam('CT', f.ctx);
+    const brain = brainOf('normal'), ts = playersOf(f, 'T'), by = botsOf(f, 'CT')[0].p.id, bb = f.state.teams.CT;
+    expect(f.ctx.map.areaAt(20, 5)).toBe('long');
+    bb.lastEnemySeen.push({ id: ts[0].id, pos: v3(20, 0, 5), tick: 990, confidence: 1, by });
+    brain.teamThink('CT', f.ctx);
+    expect(bb.plannedSite).toBeNull();
+    bb.lastEnemySeen.push({ id: ts[1].id, pos: v3(24, 0, 20), tick: 992, confidence: 1, by });    // Mid: ambiguous, no call
+    brain.teamThink('CT', f.ctx);
+    expect(bb.plannedSite).toBeNull();
+    bb.lastEnemySeen.push({ id: ts[2].id, pos: v3(22, 0, 5), tick: 995, confidence: 1, by });
+    brain.teamThink('CT', f.ctx);
+    expect(bb.plannedSite).toBe('a');
+    for (const g of Object.values(bb.assignments)) expect(g.site).toBe('a');
+    // stale lane sightings (> laneSightTicks) do not count
+    const g = makeFixture({ humanTeam: 'T', difficulty: 'normal' }); setTick(g, 1000); setLive(g, 15); planTeam('CT', g.ctx);
+    const old = 1000 - STRATEGY.laneSightTicks - 1;
+    g.state.teams.CT.lastEnemySeen.push({ id: ts[0].id, pos: v3(20, 0, 5), tick: old, confidence: 1, by }, { id: ts[1].id, pos: v3(22, 0, 5), tick: old, confidence: 1, by });
+    brain.teamThink('CT', g.ctx);
+    expect(g.state.teams.CT.plannedSite).toBeNull();
+  });
   it('after 45 s of LIVE without contact CTs push toward T spawn through mid', () => {
     const f = makeFixture({ humanTeam: 'T' }); setTick(f, 5000); setLive(f, 46);
     f.state.teams.CT.rotateCalledTick = -1;
@@ -268,6 +292,23 @@ describe('combat', () => {
     }
     const mean = delays.reduce((s, d) => s + d, 0) / delays.length;
     expect(Math.abs(mean - (0.18 + 0.12) * 60)).toBeLessThanOrEqual(1.5);
+  });
+
+  it('Hard counter-strafe brakes from full speed to ≤ 0.3 m/s in ≤ 8 ticks and never bounces back above it', () => {
+    const { world } = depot();
+    const f = makeFixture({ humanTeam: 'T' }); setTick(f, 1000); setLive(f, 20);
+    const ct = botsOf(f, 'CT')[0].p;
+    place(ct, 41, 0, 17, 90); ct.vel = v3(0, 0, 4.3); ct.grounded = true;
+    const speeds: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      const c = cloneCommand(IDLE_COMMAND, f.ctx.tick + i); c.yaw = ct.yaw;
+      counterStrafe(ct, c);
+      movePlayer(ct, c, world, 4.3, false, f.ctx.tick + i, f.state, f.ctx.out);
+      speeds.push(horizontalSpeed(ct));
+    }
+    const settle = speeds.findIndex((v) => v <= COMBAT.counterStopSpeed);
+    expect(settle).toBeGreaterThanOrEqual(0); expect(settle).toBeLessThanOrEqual(7);
+    for (let i = settle; i < speeds.length; i++) expect(speeds[i]).toBeLessThanOrEqual(COMBAT.counterStopSpeed + 1e-9);
   });
 
   it('bursts: automatics hold FIRE for the burst then pause; pistols tap with release ticks', () => {

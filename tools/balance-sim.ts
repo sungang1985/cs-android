@@ -3,11 +3,13 @@
  * Simulation and the §6 brains and prints T win-rate, mean round length (LIVE+PLANTED seconds), plant rate,
  * kills/shots, rounds without bot movement and exceptions.
  *
- * Run:  node tools/balance.mjs [--matches 20] [--difficulty all|easy|normal|hard] [--team 5] [--rounds 6] [--cap 60000]
+ * Run:  node tools/balance.mjs [--matches 20] [--difficulty all|easy|normal|hard] [--team 5] [--rounds 6] [--cap 60000] [--idle-human]
  * (the wrapper bundles this file with esbuild; the extension-less src imports cannot run under --experimental-strip-types).
  *
- * The human slot (id 1) idles at its spawn: it is fed IDLE_COMMAND every tick, so its team plays one man short.
- * humanTeam alternates with the seed parity (even → CT, odd → T) so that handicap cancels over a batch.
+ * The human slot (id 1) is driven by a bot of the friendly difficulty (like its team-mates), so the batch measures
+ * a full 5v5 bot match; `--idle-human` instead feeds it IDLE_COMMAND every tick (its team plays one man short and
+ * an idle T may hold the bomb, which inflates CT time wins). humanTeam alternates with the seed parity
+ * (even → CT, odd → T) so the friendly-difficulty rule (Easy enemies vs Normal friendlies) cancels over a batch.
  */
 import { compileMap, buildStaticWorld } from '../src/world/compile';
 import { buildNavGraph } from '../src/nav/navgraph';
@@ -15,10 +17,11 @@ import { DEPOT } from '../src/maps/depot';
 import { Simulation, type SimDeps } from '../src/sim/sim';
 import { createBotBrain } from '../src/ai/brain';
 import { makeProfiles } from '../src/ai/profiles';
+import { createBotMemory } from '../src/sim/entities';
 import { cloneCommand, IDLE_COMMAND, type MatchConfig, type Difficulty, type Team, type InputCommand, type WinReason } from '../src/sim/state';
 import type { BotBrain, BotBrainFactory } from '../src/sim/brain';
 
-export interface MatchOptions { seed: number; difficulty: Difficulty; teamSize?: 2 | 3 | 5; /** any n ≥ 1 (MatchConfig allows 4/6/8; the CI smoke uses 2) */ roundsToWin?: number; tickCap?: number; humanTeam?: Team }
+export interface MatchOptions { seed: number; difficulty: Difficulty; teamSize?: 2 | 3 | 5; /** any n ≥ 1 (MatchConfig allows 4/6/8; the CI smoke uses 2) */ roundsToWin?: number; tickCap?: number; humanTeam?: Team; /** feed IDLE_COMMAND to the human slot instead of a bot brain */ idleHuman?: boolean }
 export interface RoundStat { winner: Team | null; reason: WinReason; liveSec: number; planted: boolean; botMoveM: number; /** a bot carrier entered PLANT (intent, measurable before rules/bomb lands) */ plantTry: boolean; engaged: boolean }
 export interface MatchStats {
   seed: number; ticks: number; rounds: RoundStat[]; exceptions: string[]; badCommands: number; nanStates: number;
@@ -53,6 +56,14 @@ export function runMatch(o: MatchOptions): MatchStats {
   let sim: Simulation;
   try { sim = new Simulation({ ...worldDeps(), brains }, cfg, makeProfiles(cfg)); }
   catch (e) { stats.exceptions.push(String(e)); return stats; }
+  if (!o.idleHuman) {
+    // bot-driven human slot: same friendly difficulty as its team-mates, a middle-of-the-road profile; humanId 0 so
+    // the per-tick command no longer overrides it (candidates/snapshot are unused here).
+    const st = sim.state, h = st.players.find((p) => p.id === st.humanId)!;
+    h.isBot = true;
+    st.bots.push(createBotMemory(h.id, { nameKey: 'bot.human_slot', difficulty: cfg.difficulty === 'easy' ? 'normal' : cfg.difficulty, preferredWeapon: 'rifle', aggression: 0.5, holdPreference: 0.5 }, h.pos));
+    st.humanId = 0;
+  }
   const cap = o.tickCap ?? 60 * 60 * 15;
   let liveStart = -1, planted = false, roundIdx = 0, plantTry = false, engaged = false;
   const start = new Map<number, { x: number; z: number }>(), prev = new Map<number, { x: number; z: number }>();
@@ -117,14 +128,14 @@ export function runBalance(difficulty: Difficulty, seeds: number[], o: Omit<Matc
 export function main(argv: string[]): number {
   const arg = (k: string, d: string) => { const i = argv.indexOf('--' + k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
   const n = Number(arg('matches', '20')), team = Number(arg('team', '5')) as 2 | 3 | 5, rounds = Number(arg('rounds', '6')), cap = Number(arg('cap', String(60 * 60 * 15)));
-  const which = arg('difficulty', 'all');
+  const which = arg('difficulty', 'all'), idleHuman = argv.includes('--idle-human');
   const diffs: Difficulty[] = which === 'all' ? ['easy', 'normal', 'hard'] : [which as Difficulty];
   const seeds = Array.from({ length: n }, (_, i) => i + 1);
   let failures = 0;
-  console.log(`balance-sim: ${n} matches × ${diffs.join('/')} · ${team}v${team} · first to ${rounds} · cap ${cap} ticks · human idles at spawn (team alternates by seed)`);
+  console.log(`balance-sim: ${n} matches × ${diffs.join('/')} · ${team}v${team} · first to ${rounds} · cap ${cap} ticks · human slot ${idleHuman ? 'idles at spawn' : 'bot-driven'} (team alternates by seed)`);
   for (const d of diffs) {
     const t0 = Date.now();
-    const r = runBalance(d, seeds, { teamSize: team, roundsToWin: rounds, tickCap: cap });
+    const r = runBalance(d, seeds, { teamSize: team, roundsToWin: rounds, tickCap: cap, idleHuman });
     failures += r.exceptions + r.badCommands + r.nanStates;
     console.log(`${d.padEnd(6)} rounds ${String(r.rounds).padStart(4)} · T win ${(r.tWinRate * 100).toFixed(1)} % · mean round ${r.meanRoundSec.toFixed(1)} s · plant ${(r.plantRate * 100).toFixed(1)} % (carrier PLANT intent ${(r.plantTryRate * 100).toFixed(1)} %) · rounds with ENGAGE ${(r.engageRate * 100).toFixed(1)} % · kills ${r.kills} · shots ${r.shots} · no-move rounds ${r.roundsWithoutMovement} · exceptions ${r.exceptions} · bad cmds ${r.badCommands} · NaN ${r.nanStates} · reasons ${JSON.stringify(r.reasons)} · ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   }
