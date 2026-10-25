@@ -73,6 +73,29 @@ describe('render/mapGeometry', () => {
   it('maps materials to buckets', () => {
     expect(bucketFor(null)).toBe(null); expect(bucketFor('ceiling')).toBe('concrete'); expect(bucketFor('door_frame')).toBe('metal'); expect(bucketFor('lamp')).toBe('site_marker');
   });
+  it('greedy / per-cell floor rectangles (world lane layout) cover exactly the same visible floor area', () => {
+    const area = (g: ReturnType<typeof buildMapGeometry>) => {
+      let a = 0;
+      for (const k of ['floor', 'floor_stripe', 'metal'] as const) {
+        const b = g[k];
+        for (let t = 0; t < b.idx.length; t += 3) {
+          const [i, j, l] = [b.idx[t] * 3, b.idx[t + 1] * 3, b.idx[t + 2] * 3];
+          if (b.nrm[i + 1] !== 1) continue;
+          const ux = b.pos[j] - b.pos[i], uz = b.pos[j + 2] - b.pos[i + 2], vx = b.pos[l] - b.pos[i], vz = b.pos[l + 2] - b.pos[i + 2];
+          a += Math.abs(ux * vz - uz * vx) / 2;
+        }
+      }
+      return a;
+    };
+    const cells = [];
+    for (let cz = 0; cz < DEPOT.height; cz++) for (let cx = 0; cx < DEPOT.width; cx++) {
+      if (DEPOT.grid[cz][cx] === '#') continue;
+      const y = match.floorY(cx * 2 + 1, cz * 2 + 1);
+      cells.push({ rect: { x0: cx * 2, z0: cz * 2, x1: cx * 2 + 2, z1: cz * 2 + 2, y }, material: y > 0 ? ('metal' as const) : ('floor' as const) });
+    }
+    const split = buildMapGeometry({ ...match, renderHints: { ...match.renderHints, floorQuads: cells } });
+    expect(area(split)).toBeCloseTo(area(geo), 3);
+  });
   it('the menu diorama is a valid input', () => {
     const d = buildMapGeometry(menuDiorama());
     expect(Object.values(bucketTriangles(d)).reduce((a, b) => a + b, 0)).toBeGreaterThan(100);

@@ -97,22 +97,51 @@ export function buildMapGeometry(map: MapInput): MapGeometry {
     if (kind === 'lintel') bottomFace(out[bucket], b, o);
   });
 
+  // ── backdrop: the map perimeter is closed up to the ceiling (from the A platform the eye is above the 3 m
+  //    outer walls, so the void between wall tops and the ceiling must not read as a hole). Inward-facing,
+  //    corrugated-metal cladding on the bounds planes; below the wall tops it is hidden inside the walls.
+  {
+    const b = bounds, top = hints.ceilingY, tint = TINT.corrugated;
+    const P = (x: number, y: number, z: number): V3 => [x, y, z];
+    const sides: [V3[], V3][] = [
+      [[P(b.min.x, 0, b.max.z), P(b.min.x, 0, b.min.z), P(b.min.x, top, b.min.z), P(b.min.x, top, b.max.z)], [1, 0, 0]],
+      [[P(b.max.x, 0, b.min.z), P(b.max.x, 0, b.max.z), P(b.max.x, top, b.max.z), P(b.max.x, top, b.min.z)], [-1, 0, 0]],
+      [[P(b.min.x, 0, b.min.z), P(b.max.x, 0, b.min.z), P(b.max.x, top, b.min.z), P(b.min.x, top, b.min.z)], [0, 0, 1]],
+      [[P(b.max.x, 0, b.max.z), P(b.min.x, 0, b.max.z), P(b.min.x, top, b.max.z), P(b.max.x, top, b.max.z)], [0, 0, -1]],
+    ];
+    for (const [q, n] of sides) {
+      const r: V3 = [n[2], 0, -n[0]];
+      const u = (p: V3) => (p[0] * r[0] + p[2] * r[2]) * 2;
+      pushQuad(out.metal, q, n, [u(q[0]), q[0][1] * 0.1, u(q[1]), q[1][1] * 0.1, u(q[2]), q[2][1] * 0.1, u(q[3]), q[3][1] * 0.1], [tint, tint, tint, tint]);
+    }
+  }
+
   // ── floors (rectilinear grid so AO and site borders get their own vertices) ──
   const aoSolids = map.solids.filter((s) => isDrawn(s) && s.kind !== 'ceiling' && s.kind !== 'lintel');
   const covering = map.solids.filter((s) => (isDrawn(s) && s.kind !== 'ceiling') || s.kind === 'ramp-step');
+  const levelLines = new Map<number, { x: number[]; z: number[] }>();
   for (const fq of hints.floorQuads) {
     const r = fq.rect, y = r.y;
     const level = aoSolids.filter((s) => s.box.min.y <= y + 0.01 && s.box.max.y >= y + 0.2);
     const cover = covering.filter((s) => s.box.min.y <= y + 0.01 && s.box.max.y > y + 0.01);
     const sites = hints.siteDecals.filter((d) => Math.abs(d.rect.y - y) < 0.01).map((d) => d.rect);
-    const xs = new Set<number>([r.x0, r.x1]), zs = new Set<number>([r.z0, r.z1]);
-    const addX = (v: number) => { if (v > r.x0 && v < r.x1) xs.add(Math.round(v * 1000) / 1000); };
-    const addZ = (v: number) => { if (v > r.z0 && v < r.z1) zs.add(Math.round(v * 1000) / 1000); };
-    for (const s of level) { const bb = s.box; addX(bb.min.x); addX(bb.max.x); addX(bb.min.x - AO.dist); addX(bb.max.x + AO.dist); addZ(bb.min.z); addZ(bb.max.z); addZ(bb.min.z - AO.dist); addZ(bb.max.z + AO.dist); }
-    for (const s of cover) { addX(s.box.min.x); addX(s.box.max.x); addZ(s.box.min.z); addZ(s.box.max.z); }
-    for (const sr of sites) { addX(sr.x0); addX(sr.x1); addX(sr.x0 + BAND.stripe); addX(sr.x1 - BAND.stripe); addZ(sr.z0); addZ(sr.z1); addZ(sr.z0 + BAND.stripe); addZ(sr.z1 - BAND.stripe); }
-    for (let v = Math.ceil(r.x0 / 4) * 4; v < r.x1; v += 4) addX(v);
-    for (let v = Math.ceil(r.z0 / 4) * 4; v < r.z1; v += 4) addZ(v);
+    // grid lines are shared by every floor quad of this level, so neighbouring quads (greedy rectangles) get
+    // identical vertices along their common edges (no T-junction sparkles)
+    const key = Math.round(y * 1000);
+    let lines = levelLines.get(key);
+    if (!lines) {
+      const gx = new Set<number>(), gz = new Set<number>();
+      const ax = (v: number) => gx.add(Math.round(v * 1000) / 1000), az = (v: number) => gz.add(Math.round(v * 1000) / 1000);
+      for (const q of hints.floorQuads) if (Math.abs(q.rect.y - y) < 0.01) { ax(q.rect.x0); ax(q.rect.x1); az(q.rect.z0); az(q.rect.z1); }
+      for (const s of level) { const bb = s.box; ax(bb.min.x); ax(bb.max.x); ax(bb.min.x - AO.dist); ax(bb.max.x + AO.dist); az(bb.min.z); az(bb.max.z); az(bb.min.z - AO.dist); az(bb.max.z + AO.dist); }
+      for (const s of cover) { ax(s.box.min.x); ax(s.box.max.x); az(s.box.min.z); az(s.box.max.z); }
+      for (const sr of sites) { ax(sr.x0); ax(sr.x1); ax(sr.x0 + BAND.stripe); ax(sr.x1 - BAND.stripe); az(sr.z0); az(sr.z1); az(sr.z0 + BAND.stripe); az(sr.z1 - BAND.stripe); }
+      for (let v = Math.floor(bounds.min.x / 4) * 4; v < bounds.max.x; v += 4) ax(v);
+      for (let v = Math.floor(bounds.min.z / 4) * 4; v < bounds.max.z; v += 4) az(v);
+      lines = { x: [...gx], z: [...gz] }; levelLines.set(key, lines);
+    }
+    const xs = new Set<number>([r.x0, r.x1, ...lines.x.filter((v) => v > r.x0 && v < r.x1)]);
+    const zs = new Set<number>([r.z0, r.z1, ...lines.z.filter((v) => v > r.z0 && v < r.z1)]);
     const X = [...xs].sort((a, c) => a - c), Z = [...zs].sort((a, c) => a - c);
     const nx = X.length, nz = Z.length;
     const ao = new Float32Array(nx * nz);
@@ -187,7 +216,7 @@ export function buildMapGeometry(map: MapInput): MapGeometry {
     const t = tile(ws.site === 'a' ? 0 : 1, 0);
     const n: V3 = [-Math.sin(ws.yaw), 0, -Math.cos(ws.yaw)];
     const rgt: V3 = [n[2], 0, -n[0]];
-    const c: V3 = [ws.pos.x + n[0] * 0.02, ws.pos.y, ws.pos.z + n[2] * 0.02], hs = 0.6;
+    const c: V3 = [ws.pos.x + n[0] * 0.02, ws.pos.y, ws.pos.z + n[2] * 0.02], hs = 0.45;
     const P = (sx: number, sy: number): V3 => [c[0] + rgt[0] * sx * hs, c[1] + sy * hs, c[2] + rgt[2] * sx * hs];
     pushQuad(out.site_marker, [P(-1, -1), P(1, -1), P(1, 1), P(-1, 1)], n, [t.u0, t.v0, t.u1, t.v0, t.u1, t.v1, t.u0, t.v1], [WHITE, WHITE, WHITE, WHITE]);
   }
