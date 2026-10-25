@@ -16,7 +16,7 @@ import { stepGrenades } from '../weapons/grenade';
 import { tryPickup } from '../weapons/items';
 import { createMatch, defaultProfiles } from '../rules/match';
 import { tickRound } from '../rules/round';
-import { tickBomb } from '../rules/bomb';
+import { tickBomb, applyUseIntent } from '../rules/bomb';
 import { canBuyNow, buy } from '../rules/economy';
 import { MODES } from '../rules/modes';
 import type { BotBrain, BotBrainFactory, ThinkContext } from './brain';
@@ -121,6 +121,7 @@ export class Simulation {
 
     // 6. items / bomb / use
     for (const p of s.players) { if (p.alive) tryPickup(s, p, p.isBot || s.cfg.options.autoPickup, this.sink); }
+    for (const p of s.players) { const c = commands.get(p.id); if (p.alive && c) applyUseIntent(p, c, s, map, this.sink); }
     tickBomb(s, map, this.sink);
     processDeaths(s, map, this.sink);
 
