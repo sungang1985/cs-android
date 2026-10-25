@@ -92,6 +92,7 @@ export class Game {
     this.perf.onQualityStep = (q) => { this.renderer.setQuality(q); this.onResize(); };
     this.applyFpsCap();
     this.bus.on('action', (a) => this.onAction(a.id, a.payload));
+    this.bus.on('screen', () => this.syncTouchVisibility());
     this.bus.on('settingsChanged', (s) => this.applySettings(s));
     this.bus.on('layoutChanged', (l) => { this.layout = cloneLayout(l); this.input.setLayout(this.layout); this.hud.setLayout(this.layout); persist.set('layout', this.layout); });
     bridge.onBack(() => this.onBack());
@@ -129,7 +130,7 @@ export class Game {
     this.stats = new MatchStats(this.sim.state.humanId);
     this.spotted = []; this.inMatch = true; this.paused = false;
     for (const s of this.screens.visible()) this.screens.hide(s);
-    this.hud.show(true); this.input.attach(); this.input.setSettings(this.settings.controls);
+    this.hud.show(true); this.input.attach(); this.input.setSettings(this.settings.controls); this.syncTouchVisibility();
     this.renderer.menuScene(false); this.audio.startAmbient();
     this.loop.timeScale = 1; this.loop.pause(false); this.loop.start();
   }
@@ -238,8 +239,8 @@ export class Game {
       case 'rematch': if (this.cfg) { const last = persist.get<Partial<MatchConfig> | null>('lastSettings', null); const team = (last?.humanTeam as Team | 'random' | undefined) ?? this.cfg.humanTeam; this.startMatch({ ...this.cfg, humanTeam: team === 'random' ? this.cfg.humanTeam : team, seed: this.cfg.seed + 1 }); } break;
       case 'changeMode': { const last = this.cfg; this.stopMatch(); for (const s of this.screens.visible()) this.screens.hide(s); this.screens.show('mode', { last }); break; }
       case 'drop': this.input.press(Btn.DROP); this.pause(false); break;
-      case 'openBuy': if (this.sim && this.cfg) { this.input.releasePointer(); this.buyMenu.open(this.next.local, this.humanTeamNow()); } break;
-      case 'closeBuy': this.buyMenu.close(); break;
+      case 'openBuy': if (this.sim && this.cfg) { this.input.releasePointer(); this.buyMenu.open(this.next.local, this.humanTeamNow()); this.syncTouchVisibility(); } break;
+      case 'closeBuy': this.buyMenu.close(); this.syncTouchVisibility(); break;
       case 'skipRound': this.loop.timeScale = 4; break;
       case 'spectatePrev': this.input.spectate(-1); break;
       case 'spectateNext': this.input.spectate(1); break;
@@ -283,6 +284,12 @@ export class Game {
     this.hud.setView({ fovDeg: this.renderer.getFov(), width: w, height: h });
     const portrait = h > w && bridge.isTouch();
     if (portrait) { if (!this.screens.visible().includes('rotate')) this.screens.show('rotate'); } else this.screens.hide('rotate');
+  }
+
+  /** Touch controls are hidden under any screen or the buy menu (they would bleed through the overlays). */
+  private syncTouchVisibility(): void {
+    const covered = this.screens.visible().some((s) => s !== 'rotate') || this.buyMenu.isOpen;
+    this.input.setTouchVisible(this.inMatch && !covered);
   }
 
   /** Use-pill hint (§7.2): 1 plant, 2 defuse, 3 pick up, 0 none — the snapshot only carries an ACTIVE use action. */
