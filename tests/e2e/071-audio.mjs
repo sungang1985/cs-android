@@ -1,6 +1,6 @@
 /**
  * Audio smoke (§9.3) on the real WebAudio API: unlock() renders the bank (≈ 72 buffers), plays a spatialised
- * world sound through the panner chain, a UI click and the ambient loop, without page errors.
+ * world sound through the panner chain, a UI click (direct and via a real button) and the ambient loop, without page errors.
  */
 export default async function ({ page, url, expect, ready, dbg, log }) {
   await page.goto(url + 'index.html?test=1&seed=3', { waitUntil: 'load' });
@@ -22,6 +22,13 @@ export default async function ({ page, url, expect, ready, dbg, log }) {
     return a.stats().voices;
   });
   expect(voices >= 3, `voices playing (got ${voices})`);
+  const clickVoices = await page.evaluate(() => {
+    const a = globalThis.__cs.game.audio, before = a.stats().voices;
+    const b = document.createElement('button'); b.type = 'button'; b.addEventListener('click', (e) => e.stopPropagation());
+    document.getElementById('ui').append(b); b.click(); b.remove();
+    return a.stats().voices - before;
+  });
+  expect(clickVoices === 1, `a UI button click plays ui_tap through the app shell (got ${clickVoices})`);
   await dbg('stepTicks', 30);
   await page.waitForTimeout(300);
   await page.evaluate(() => { const a = globalThis.__cs.game.audio; a.stopAmbient(); a.suspend(); a.resume(); });

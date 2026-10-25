@@ -89,6 +89,16 @@ describe('AudioEngine (§9.3)', () => {
     r.eng.handle(sound('fire_ak', v3(0, 1.5, 0), 40, local.id), local);
     expect(r.played().length).toBe(2);
   });
+  it('a bot firing the same weapon a tick earlier never silences the player\'s own shot', async () => {
+    const r = await rig();
+    r.eng.handle(sound('fire_ak', v3(3, 1.5, 0), 40, 5, 100), local);
+    r.ctx.currentTime += 1 / 60;
+    r.eng.handle(sound('fire_ak', v3(0, 1.5, 0), 40, local.id, 101), local);
+    r.eng.handle(sound('fire_ak', v3(4, 1.5, 0), 40, 6, 101), local); // a second spraying bot is still deduped
+    const p = r.played();
+    expect(p.length).toBe(2);
+    expect(hasNode(p[1].src, 'panner')).toBe(false);
+  });
   it('occlusion → lowpass 700 Hz at −6 dB; distant gunfire → lowpass 600 Hz', async () => {
     const r = await rig({ lineOfSight: () => false });
     r.eng.handle(sound('impact_metal', v3(5, 0, 0), 10, 5), local);
@@ -159,6 +169,33 @@ describe('AudioEngine (§9.3)', () => {
     r.eng.handle(env('bombDefused', { player: 4 }, 1000 + 60 * 34), local);
     for (let t = 1000 + 60 * 34; t < 1000 + 60 * 36; t++) step(t);
     expect(beeps()).toBe(total);
+  });
+  it('a paused sim (syncTick frozen) plays no extrapolated beeps and the schedule stays on sim time', async () => {
+    const r = await rig();
+    r.eng.handle(env('bombPlanted', { player: 3, pos: v3(4, 0, 4), site: 'a' }, 1000), local);
+    const beeps = () => r.played().filter((p) => p.id === 'bomb_beep').length;
+    const lst = { pos: v3(0, 1.65, 0), fwd: v3(0, 0, -1), up: v3(0, 1, 0) };
+    const frame = (tick: number) => { r.ctx.currentTime += 1 / 60; r.eng.syncTick(tick); r.eng.setListener(lst); for (const p of r.played()) p.src.end(); };
+    for (let t = 1001; t <= 1000 + 60 * 32; t++) frame(t);   // ≈ 3 s left: beeps every ≈ 4 ticks
+    const before = beeps();
+    for (let i = 0; i < 60; i++) frame(1000 + 60 * 32);       // 1 s paused
+    expect(beeps()).toBe(before);
+    for (let t = 1000 + 60 * 32 + 1; t <= 1000 + 60 * 32 + 8; t++) frame(t); // resumed: beeping continues at once
+    expect(beeps()).toBeGreaterThan(before);
+  });
+  it('arm(): the first gesture anywhere creates and resumes the context (first launch has no Play tap)', async () => {
+    const g = globalThis as unknown as { window?: EventTarget };
+    const had = 'window' in g; const prev = g.window;
+    const win = new EventTarget(); g.window = win;
+    try {
+      let ctx: FakeAudioContext | null = null;
+      const eng = new AudioEngine({ createContext: () => { ctx = new FakeAudioContext(); return ctx as unknown as AudioContext; }, bank });
+      eng.arm();
+      expect(ctx).toBeNull();
+      win.dispatchEvent(new Event('pointerup'));
+      await new Promise((res) => setTimeout(res, 0));
+      expect(ctx).not.toBeNull(); expect(eng.unlocked).toBe(true); expect(eng.ready).toBe(true);
+    } finally { if (had) g.window = prev; else delete g.window; }
   });
   it('radio stand-ins: a teammate spotting a fresh enemy plays radio_spotted (rate-limited); the human\'s own spots do not', async () => {
     const r = await rig();
