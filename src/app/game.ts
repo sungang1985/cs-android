@@ -30,6 +30,7 @@ import { buildMatchConfig, pickSeed } from './matchSettings';
 import { MatchStats, EMPTY_STATS } from './stats';
 import { Perf } from './perf';
 import { t, setLocale, getLocale } from '../i18n/i18n';
+import { canPlant, canDefuse } from '../rules/bomb';
 
 export interface GameOptions { canvas: HTMLCanvasElement; uiRoot: HTMLElement; radarCanvas: HTMLCanvasElement; settings: Settings; layout: TouchLayout; search: string; now: () => number }
 
@@ -69,6 +70,16 @@ export class Game {
     this.renderer = new GameRenderer(opts.canvas, { quality: this.settings.quality === 'auto' ? 'medium' : this.settings.quality, fov: this.settings.controls.fovDeg });
     this.radar = new Radar(opts.radarCanvas);
     this.input = new InputSystem(opts.canvas, this.settings.controls, this.layout);
+    this.input.onUiAction((id, down) => {
+      switch (id) {
+        case 'pause': if (this.inMatch) { this.input.releasePointer(); this.pause(true); } break;
+        case 'openBuy': this.input.releasePointer(); this.onAction('openBuy'); break;
+        case 'scoreboard':
+          if (this.sim && this.cfg) { if (down === false) this.screens.hide('scoreboard'); else this.screens.show('scoreboard', { snapshot: this.next, humanTeam: this.cfg.humanTeam, mvp: this.sim.state.round.mvp }); }
+          break;
+        default: this.onAction(id);
+      }
+    });
     this.hud = new Hud(opts.uiRoot, this.bus);
     this.screens = new Screens(opts.uiRoot, this.bus);
     this.buyMenu = new BuyMenu(opts.uiRoot, this.bus);
@@ -105,6 +116,7 @@ export class Game {
     this.renderer.loadMap(map); this.radar.loadMap(map); this.audio.setWorld(world);
     const human = this.sim.state.players.find((p) => p.id === this.sim!.state.humanId);
     this.input.setLook(human ? human.yaw : 0, 0);
+    this.audio.setLocalTeam(human ? human.team : cfg.humanTeam);
     this.prev = createSnapshot(); this.next = createSnapshot();
     this.sim.writeSnapshot(this.next); this.sim.writeSnapshot(this.prev);
     this.stats = new MatchStats(this.sim.state.humanId);
@@ -132,7 +144,7 @@ export class Game {
   pause(p: boolean): void {
     if (!this.inMatch || this.paused === p) return;
     this.paused = p; this.loop.pause(p);
-    if (p) this.screens.show('pause', { canBuy: this.next.local.canBuy === 1 }); else this.screens.hide('pause');
+    if (p) { this.input.releasePointer(); this.screens.show('pause', { canBuy: this.next.local.canBuy === 1 }); } else this.screens.hide('pause');
   }
   get isPaused(): boolean { return this.paused; }
   get isInMatch(): boolean { return this.inMatch; }
@@ -162,7 +174,8 @@ export class Game {
     const t0 = performance.now();
     const preview = this.input.previewLook(sim.aimCandidates(), this.next.local);
     this.renderer.render(this.prev, this.next, alpha, preview, frameDt);
-    if (this.frame++ % 3 === 0) { this.hud.update(this.next); this.radar.draw(this.next, this.spotted, preview.yaw); }
+    if (this.frame++ % 3 === 0) { this.hud.update(this.next); this.radar.draw(this.next, this.spotted, preview.yaw); this.updateUseHint(); }
+    this.audio.syncTick(sim.state.tick);
     this.audio.setListener(this.renderer.cameraPose());
     const rs = this.renderer.stats; this.perf.drawCalls = rs.drawCalls; this.perf.triangles = rs.triangles;
     this.perf.sample(frameDt * 1000, this.loop.stats.simMs, performance.now() - t0);
@@ -183,7 +196,7 @@ export class Game {
         const d = e.data as SimEvents['roundPhase'];
         if (d.phase === 'FREEZE') {
           this.screens.hide('roundEnd'); this.loop.timeScale = 1; this.spotted = [];
-          const me = sim.state.players.find((p) => p.id === sim.state.humanId); if (me) this.input.setLook(me.yaw, 0); // spawn facing
+          const me = sim.state.players.find((p) => p.id === sim.state.humanId); if (me) { this.input.setLook(me.yaw, 0); this.audio.setLocalTeam(me.team); } // spawn facing, half swap
           if (this.cfg && this.cfg.mode === 'defusal') persist.set('match', { cfg: this.cfg, state: sim.serialize(), savedAt: this.now() });
         }
         if (d.phase === 'LIVE') this.screens.hide('roundEnd');
@@ -260,6 +273,18 @@ export class Game {
     this.hud.setView({ fovDeg: this.renderer.getFov(), width: w, height: h });
     const portrait = h > w && bridge.isTouch();
     if (portrait) { if (!this.screens.visible().includes('rotate')) this.screens.show('rotate'); } else this.screens.hide('rotate');
+  }
+
+  /** Use-pill hint (§7.2): 1 plant, 2 defuse, 3 pick up, 0 none — the snapshot only carries an ACTIVE use action. */
+  private updateUseHint(): void {
+    const sim = this.sim; if (!sim) return;
+    const me = sim.state.players.find((p) => p.id === sim.state.humanId);
+    if (!me || !me.alive) { this.input.setUseHint(0); return; }
+    if (me.use.action !== 'none') { this.input.setUseHint(me.use.action === 'plant' ? 1 : me.use.action === 'defuse' ? 2 : 3); return; }
+    if (canPlant(me, sim.state, sim.deps.map)) { this.input.setUseHint(1); return; }
+    if (canDefuse(me, sim.state)) { this.input.setUseHint(2); return; }
+    const near = sim.state.items.some((it) => Math.abs(it.pos.x - me.pos.x) <= 1 && Math.abs(it.pos.z - me.pos.z) <= 1 && (it.kind === 'weapon' || (it.kind === 'bomb' && me.team === 'T') || (it.kind === 'kit' && me.team === 'CT')));
+    this.input.setUseHint(near ? 3 : 0);
   }
 
   // ───────── hooks for tests / debug ─────────
