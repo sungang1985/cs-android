@@ -30,7 +30,7 @@ import {
 } from './combat';
 import {
   NEVER, LOCAL, ticks, distXZ, copyV, player, setState, isDecisionTick, isLastAlive, teammateWithin, liveElapsed, bombRemainingSec,
-  isLocalGoal, sameGoal, cloneGoal, teamPlayers, isLive, enemyOf, finite,
+  isLocalGoal, sameGoal, cloneGoal, teamPlayers, isLive, enemyOf, finite, STAGGER,
 } from './common';
 
 export const IdleBot: BotBrain = {
@@ -52,7 +52,7 @@ export const RandomBot: BotBrain = {
   teamThink(team: Team, ctx: ThinkContext): void { void team; void ctx; },
 };
 
-export const BRAIN = { lookTauSec: 0.12, plantSpotR: 1.2, defuseR: 1.3, ninjaSec: 12, huntLostTicks: 120, investigateMaxTicks: 15 * 60, retreatCoverTicks: 120, plantNoEnemyTicks: 90, defuseNoEnemyTicks: 60, plantAloneTicks: 20 * 60, plantTimeoutTicks: 240, chokeCooldown: 180, chokePause: 24, useLookDownDeg: 30 } as const;
+export const BRAIN = { lookTauSec: 0.12, plantSpotR: 1.2, defuseR: 1.3, ninjaSec: 12, huntLostTicks: 120, investigateMaxTicks: 15 * 60, retreatCoverTicks: 120, plantNoEnemyTicks: 90, defuseNoEnemyTicks: 60, plantAloneTicks: 20 * 60, plantTimeoutTicks: 240, chokeCooldown: 180, chokePause: 24, useLookDownDeg: 30, heCheckEvery: 4 } as const;
 const BUY_CODE = { normal: 100, save: 101, force: 102 } as const;
 const _eye = v3(), _p = v3();
 
@@ -99,7 +99,12 @@ function adopt(ctx: ThinkContext, self: PlayerState, mem: BotMemory, g: Goal, st
   setState(ctx, mem, state, self);
 }
 function doPlan(ctx: ThinkContext, self: PlayerState, mem: BotMemory): void { adopt(ctx, self, mem, requestGoal(ctx, self), 'MOVE'); }
-function goHunt(ctx: ThinkContext, self: PlayerState, mem: BotMemory, pos: Vec3, state: 'HUNT' | 'INVESTIGATE'): void { adopt(ctx, self, mem, { kind: 'investigate', pos: copyV(pos) }, state); }
+/**
+ * Heard positions sit at the sound's height (gunshot eye, wall impact, damage hit point), so hunt/investigate goals are
+ * snapped to the nearest nav node (floor height, walkable): arrivedAt() needs |Δy| < 1.2 and a wall point is unreachable.
+ */
+export function floorGoal(ctx: ThinkContext, pos: Vec3): Vec3 { const n = ctx.nav.nodes[ctx.nav.nearest(pos)]; return copyV(n ? n.pos : pos); }
+function goHunt(ctx: ThinkContext, self: PlayerState, mem: BotMemory, pos: Vec3, state: 'HUNT' | 'INVESTIGATE'): void { adopt(ctx, self, mem, { kind: 'investigate', pos: floorGoal(ctx, pos) }, state); }
 /** RETREAT to a cover node; coverNear() does not check reachability, so the cover only counts with a path to it. */
 function goRetreat(ctx: ThinkContext, self: PlayerState, mem: BotMemory, cover: Vec3 | null): boolean {
   if (cover && computePath(ctx, self, mem, cover)) mem.goal = { kind: 'roam', pos: cover, holdSpot: LOCAL };
@@ -116,7 +121,8 @@ function assignmentChanged(ctx: ThinkContext, self: PlayerState, mem: BotMemory)
 
 function tryGrenades(ctx: ThinkContext, self: PlayerState, mem: BotMemory, cfg: DifficultyCfg, per: Perception): void {
   if (mem.burstLeft !== 0 || per.best || !isLive(ctx.state) || cfg.grenades === 'none' || self.throwing) return;
-  const he = heTarget(ctx, self, mem, cfg);
+  // heTarget simulates the throw (heAim, up to 3 grenade flights): only on every heCheckEvery-th decision pass
+  const he = Math.floor(ctx.tick / STAGGER) % BRAIN.heCheckEvery === 0 ? heTarget(ctx, self, mem, cfg) : null;
   if (he) { startThrow(mem, 'he', he); return; }
   if (mem.state === 'MOVE') { const fl = flashTarget(ctx, self, mem, cfg); if (fl) startThrow(mem, 'flash', fl); }
 }
@@ -177,7 +183,7 @@ export function decide(ctx: ThinkContext, self: PlayerState, mem: BotMemory, cfg
       const g = mem.goal;
       if (!g || arrivedAt(self, mem, g.pos, 2) || tick - mem.stateSinceTick > BRAIN.investigateMaxTicks) { doPlan(ctx, self, mem); return; }
       const h = freshHeard(ctx, self, 30, mem.stateSinceTick);
-      if (h && distXZ(h, g.pos) > 4) { mem.goal = { kind: 'investigate', pos: copyV(h) }; computePath(ctx, self, mem, h); }
+      if (h && distXZ(h, g.pos) > 4) { mem.goal = { kind: 'investigate', pos: floorGoal(ctx, h) }; computePath(ctx, self, mem, mem.goal.pos); }
       tryGrenades(ctx, self, mem, cfg, per);
       return;
     }
@@ -412,6 +418,9 @@ function think(ctx: ThinkContext, self: PlayerState, mem: BotMemory): InputComma
   if (phase === 'WARMUP' || phase === 'ROUND_END' || phase === 'MATCH_END') { mem.aimYaw = self.yaw; mem.aimPitch = self.pitch; return cmd; }
   if (mem.state === 'BUY') { buyTick(ctx, self, mem, cmd); return finish(cmd, mem, self); }
   if (mem.state === 'DEAD') { mem.aimYaw = self.yaw; mem.aimPitch = self.pitch; setState(ctx, mem, 'PLAN', self); }
+  // TDM respawn (rules/modes/tdm.ts) puts the bot straight into PLAN with no goal on the respawn tick: resync the aim
+  // to the freshly placed body, or cmd.yaw would snap it back to the facing it died with
+  else if (mem.state === 'PLAN' && mem.goal === null && tick === mem.stateSinceTick) { mem.aimYaw = self.yaw; mem.aimPitch = self.pitch; }
   if (isDecisionTick(st, mem, tick)) decide(ctx, self, mem, cfg, perceive(ctx, self, mem, cfg));
   act(ctx, self, mem, cfg, cmd);
   if (st.cfg.mode === 'tdm' && tick % 10 === 0 && !cmd.buy) cmd.buy = tdmLoadout(self, mem);
