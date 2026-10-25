@@ -18,7 +18,8 @@
     "bench": "vitest bench --run --project pure tests/bench",
     "size": "node tools/size.mjs",
     "golden:update": "GOLDEN_UPDATE=1 vitest run --project pure tests/unit/sim/golden.test.ts",
-    "nav:dump": "node tools/nav-dump.mjs"
+    "nav:dump": "node tools/nav-dump.mjs",
+    "balance": "node tools/balance.mjs"
   },
   "license": "MIT",
   "dependencies": {

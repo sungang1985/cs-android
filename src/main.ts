@@ -40,7 +40,7 @@ function boot(): void {
   if (test) Object.assign(cs, makeTestHooks(game));
   (globalThis as unknown as { __cs: unknown }).__cs = cs;
   pwa.register();
-  game.showMain();
+  game.boot(test);
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();

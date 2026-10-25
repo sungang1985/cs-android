@@ -81,6 +81,8 @@ export class Game {
       }
     });
     this.hud = new Hud(opts.uiRoot, this.bus);
+    this.hud.setSettings(this.settings.controls);
+    this.hud.onScoreboard((show) => { if (show && this.sim) this.screens.show('scoreboard', { snapshot: this.next, humanTeam: this.humanTeamNow(), mvp: this.sim.state.round.mvp }); else this.screens.hide('scoreboard'); });
     this.screens = new Screens(opts.uiRoot, this.bus);
     this.buyMenu = new BuyMenu(opts.uiRoot, this.bus);
     this.buyMenu.onBuy((item) => this.input.setBuy(item));
@@ -99,6 +101,9 @@ export class Game {
     pwa.onUpdateAvailable(() => { if (!this.inMatch) this.showMain(); });
   }
 
+  /** The human's CURRENT side (sides swap at the half). */
+  humanTeamNow(): Team { const s = this.sim; const p = s?.state.players.find((q) => q.id === s.state.humanId); return p?.team ?? this.cfg?.humanTeam ?? 'CT'; }
+
   // ───────── match lifecycle ─────────
   startMatchFromPartial(partial: Partial<MatchConfig> & { humanTeam?: Team | 'random' }): void {
     const cfg = buildMatchConfig(partial, this.settings, this.seedRng.nextU32() % 1_000_000, () => this.seedRng.next());
@@ -108,6 +113,7 @@ export class Game {
   startMatch(cfg: MatchConfig, restoreJson?: string): void {
     this.stopMatch();
     const map = compileMap(DEPOT, cfg.mode === 'training' ? 'training' : 'match');
+    if (map.training) this.screens.setOnboardingTarget(map.training.onboardingPos);
     const world = buildStaticWorld(map);
     const nav = buildNavGraph(map, world);
     const deps = { map, world, nav, brains: createBotBrain() };
@@ -174,7 +180,7 @@ export class Game {
     const t0 = performance.now();
     const preview = this.input.previewLook(sim.aimCandidates(), this.next.local);
     this.renderer.render(this.prev, this.next, alpha, preview, frameDt);
-    if (this.frame++ % 3 === 0) { this.hud.update(this.next); this.radar.draw(this.next, this.spotted, preview.yaw); this.updateUseHint(); }
+    if (this.frame++ % 3 === 0) { this.hud.update(this.next); this.radar.draw(this.next, this.spotted, preview.yaw); this.updateUseHint(); if (this.buyMenu.isOpen) this.buyMenu.update(this.next.local, this.humanTeamNow()); }
     this.audio.syncTick(sim.state.tick);
     this.audio.setListener(this.renderer.cameraPose());
     const rs = this.renderer.stats; this.perf.drawCalls = rs.drawCalls; this.perf.triangles = rs.triangles;
@@ -189,7 +195,7 @@ export class Game {
         const d = e.data as SimEvents['roundEnd'];
         this.loop.timeScale = 0.5;
         this.roundEndTimer = window.setTimeout(() => { this.loop.timeScale = 1; this.roundEndTimer = 0; }, 1500);
-        if (this.cfg) this.screens.show('roundEnd', { winner: d.winner, reason: d.reason, mvp: d.mvp, deltas: d.deltas, scoreT: sim.state.round.scoreT, scoreCT: sim.state.round.scoreCT, humanTeam: this.cfg.humanTeam, names: {} });
+        if (this.cfg) this.screens.show('roundEnd', { winner: d.winner, reason: d.reason, mvp: d.mvp, deltas: d.deltas, scoreT: sim.state.round.scoreT, scoreCT: sim.state.round.scoreCT, humanTeam: this.humanTeamNow(), names: {} });
         break;
       }
       case 'roundPhase': {
@@ -211,7 +217,7 @@ export class Game {
         this.stats?.commit(result, this.settings.controls.aimAssist);
         this.loop.pause(true); this.paused = true;
         this.screens.hide('roundEnd');
-        if (this.cfg) this.screens.show('matchEnd', { result: d.result, humanTeam: this.cfg.humanTeam, scoreT: d.scoreT, scoreCT: d.scoreCT, mvp: sim.state.round.mvp, personal: { ...human.stats, accuracy: human.stats.shots ? human.stats.hits / human.stats.shots : 0, hsPercent: human.stats.kills ? human.stats.headshots / human.stats.kills : 0 }, assistLevel: this.settings.controls.aimAssist, cfg: this.cfg });
+        if (this.cfg) this.screens.show('matchEnd', { result: d.result, humanTeam: human.team, scoreT: d.scoreT, scoreCT: d.scoreCT, mvp: sim.state.round.mvp, personal: { ...human.stats, accuracy: human.stats.shots ? human.stats.hits / human.stats.shots : 0, hsPercent: human.stats.kills ? human.stats.headshots / human.stats.kills : 0 }, assistLevel: this.settings.controls.aimAssist, cfg: this.cfg });
         break;
       }
     }
@@ -228,9 +234,9 @@ export class Game {
       case 'quit': this.showMain(); break;
       case 'menu': this.showMain(); break;
       case 'rematch': if (this.cfg) { const last = persist.get<Partial<MatchConfig> | null>('lastSettings', null); const team = (last?.humanTeam as Team | 'random' | undefined) ?? this.cfg.humanTeam; this.startMatch({ ...this.cfg, humanTeam: team === 'random' ? this.cfg.humanTeam : team, seed: this.cfg.seed + 1 }); } break;
-      case 'changeMode': this.stopMatch(); for (const s of this.screens.visible()) this.screens.hide(s); this.screens.show('mode', { last: this.cfg }); break;
+      case 'changeMode': { const last = this.cfg; this.stopMatch(); for (const s of this.screens.visible()) this.screens.hide(s); this.screens.show('mode', { last }); break; }
       case 'drop': this.input.press(Btn.DROP); this.pause(false); break;
-      case 'openBuy': if (this.sim && this.cfg) this.buyMenu.open(this.next.local, this.cfg.humanTeam); break;
+      case 'openBuy': if (this.sim && this.cfg) { this.input.releasePointer(); this.buyMenu.open(this.next.local, this.humanTeamNow()); } break;
       case 'closeBuy': this.buyMenu.close(); break;
       case 'skipRound': this.loop.timeScale = 4; break;
       case 'spectatePrev': this.input.spectate(-1); break;
@@ -253,6 +259,7 @@ export class Game {
   private applySettings(s: Settings): void {
     this.settings = cloneSettings(s);
     this.input.setSettings(this.settings.controls);
+    this.hud.setSettings(this.settings.controls);
     this.renderer.setFov(this.settings.controls.fovDeg);
     if (this.settings.quality !== 'auto') { this.perf.auto = false; this.renderer.setQuality(this.settings.quality); } else { this.perf.auto = true; this.renderer.setQuality(this.perf.effective); }
     this.audio.setVolumes(this.settings.volume);
@@ -285,6 +292,13 @@ export class Game {
     if (canDefuse(me, sim.state)) { this.input.setUseHint(2); return; }
     const near = sim.state.items.some((it) => Math.abs(it.pos.x - me.pos.x) <= 1 && Math.abs(it.pos.z - me.pos.z) <= 1 && (it.kind === 'weapon' || (it.kind === 'bomb' && me.team === 'T') || (it.kind === 'kit' && me.team === 'CT')));
     this.input.setUseHint(near ? 3 : 0);
+  }
+
+  /** First launch (§7.6): training range with the guided onboarding; otherwise the main menu. */
+  boot(skipOnboarding: boolean): void {
+    const ob = persist.get<{ done: boolean }>('onboarding', { done: false });
+    if (!skipOnboarding && !ob.done) { this.startMatchFromPartial({ mode: 'training' }); this.screens.onboardingStep(0); }
+    else this.showMain();
   }
 
   // ───────── hooks for tests / debug ─────────
