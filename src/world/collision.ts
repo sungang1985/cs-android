@@ -62,6 +62,8 @@ export interface BodyShape {
 const SKIN = 1e-4;
 /** Kinds that are player-clipped up to the sky when moveBody runs with `clipWalls` (see moveBody). */
 const CLIP_KINDS: readonly string[] = ['wall', 'lintel', 'seal'];
+/** Kinds whose tops a clipped body can never step up onto, grounded or airborne (§3.3: tall crates are not mountable). */
+const NO_STEP_KINDS: readonly string[] = ['tallcrate'];
 
 /** Ray vs AABB returning [tEnter, tExit] or null (tEnter clamped to >= 0). */
 export function rayAabbRange(origin: Vec3, dir: Vec3, box: Aabb, tMax = Infinity): [number, number] | null {
@@ -280,7 +282,9 @@ export class StaticWorld {
    * top under the 4.5 m ceiling).
    * `clipWalls` (player clip): solids of kind wall / lintel / seal extend upward without limit for this body's
    * horizontal sweeps and step tests, so a body can never get onto a 3 m wall top (e.g. by crouch-jumping off the
-   * 2.5 m crate on the A platform). Rays, LOS and grenades are unaffected (they never call moveBody).
+   * 2.5 m crate on the A platform). Rays, LOS and grenades are unaffected (they never call moveBody). With `clipWalls`
+   * a step-up also never lands on a tall crate top (kind 'tallcrate'), so the airborne step cannot carry a jump off a
+   * 1 m crate (apex 1.9 m) onto a 2 m tall crate (§3.3).
    */
   moveBody(pos: Vec3, vel: Vec3, dt: number, shape: BodyShape, opts: { wasGrounded?: boolean; snapDown?: boolean; airStep?: boolean; airStepHeadroom?: number; clipWalls?: boolean } = {}): MoveResult {
     const hw = shape.halfWidth, h = shape.height;
@@ -332,7 +336,7 @@ export class StaticWorld {
       if (Math.abs(moved) <= Math.abs(groundAllowed) + 1e-6) { p.y = save; return null; }
       p[axis] += moved;
       const floor = this.floorHeightAt(p.x, p.z, p.y, hw);
-      if (floor <= save + 1e-6 || floor > lifted + SKIN) { p[axis] -= moved; p.y = save; return null; }
+      if (floor <= save + 1e-6 || floor > lifted + SKIN || (clip && this.floorIsKind(p.x, p.z, floor, hw, NO_STEP_KINDS))) { p[axis] -= moved; p.y = save; return null; }
       if (airborne && (opts.airStepHeadroom ?? 0) > h) {
         setBox(p.x, floor + SKIN, p.z); box.max.y = floor + (opts.airStepHeadroom ?? h); // (setBox is redone before every use)
         if (this.bodyOverlaps(box, clip)) { p[axis] -= moved; p.y = save; return null; }
@@ -422,6 +426,23 @@ export class StaticWorld {
         if (!(b.min.x < box.max.x && b.max.x > box.min.x && b.min.z < box.max.z && b.max.z > box.min.z)) continue;
         const top = s.kind !== undefined && CLIP_KINDS.includes(s.kind) ? Infinity : b.max.y;
         if (b.min.y < box.max.y && top > box.min.y) { hit = true; return; }
+      }
+    });
+    return hit;
+  }
+
+  /** Does a solid of one of `kinds` have its top at height y (±0.01) under the (x,z) footprint? */
+  private floorIsKind(x: number, z: number, y: number, halfWidth: number, kinds: readonly string[]): boolean {
+    const q: Aabb = { min: v3(x - halfWidth, y - 0.01, z - halfWidth), max: v3(x + halfWidth, y + 0.01, z + halfWidth) };
+    const st = ++this.stamp;
+    let hit = false;
+    this.forCells(q, (ci) => {
+      if (hit) return;
+      for (const id of this.cells[ci]) {
+        if (this.stamps[id] === st) continue;
+        this.stamps[id] = st;
+        const s = this.solids[id], b = s.box;
+        if (s.kind !== undefined && kinds.includes(s.kind) && Math.abs(b.max.y - y) <= 0.01 && b.max.x > q.min.x && b.min.x < q.max.x && b.max.z > q.min.z && b.min.z < q.max.z) { hit = true; return; }
       }
     });
     return hit;
