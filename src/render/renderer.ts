@@ -3,7 +3,7 @@
  * RenderSnapshot (views keyed by entity id, interpolated by alpha), draws event-driven effects, a separate
  * viewmodel pass, and a main-menu cinematic with its own rAF loop (the app's FixedLoop is stopped there).
  */
-import { WebGLRenderer, Scene, Group, Color, FogExp2, AmbientLight, HemisphereLight, DirectionalLight, Vector3, DoubleSide, type Mesh } from 'three';
+import { WebGLRenderer, Scene, Group, Color, FogExp2, AmbientLight, HemisphereLight, DirectionalLight, PointLight, Vector3, DoubleSide, type Mesh } from 'three';
 import type { Vec3, Aabb } from '../core/math';
 import { v3, clamp, wrapAngle, rayAabb, aabbFaceNormal, DEG, smoothstep } from '../core/math';
 import { Rng } from '../core/rng';
@@ -41,6 +41,8 @@ interface World {
   tracers: Tracers; holes: DecalRing; blood: DecalRing; dust: ParticlePool; sparks: ParticlePool; smoke: ParticlePool;
   flashes: MuzzleFlashes; booms: Explosions; preview: ThrowPreview; marker: Marker;
   mapMesh: MapMesh | null; lights: Group | null; menuMesh: MapMesh | null;
+  /** High only: 1-frame muzzle PointLight (always present so toggling never recompiles shaders). */
+  muzzleLight: PointLight | null; muzzleLightFrames: number;
 }
 
 export class GameRenderer {
@@ -57,6 +59,7 @@ export class GameRenderer {
   private clock = 0;
   private readonly fx = new Rng(4242);
   private localId = 1;
+  private specId = -1;
   private markerPos: Vec3 | null = null;
   private readonly shotCount = new Map<number, number>();
   private readonly lastShotDir = new Map<number, Vec3>();
@@ -112,7 +115,9 @@ export class GameRenderer {
     const vm = new Viewmodel(lib, 0); vm.prewarm();
     root.add(shared.group, chars.group, tracers.batch.mesh, holes.batch.mesh, blood.batch.mesh, dust.points, sparks.points, smoke.points, flashes.batch.mesh, booms.group, preview.points, marker.mesh);
     this.scene.add(root);
-    this.w = { lib, spec, root, shared, chars, props, vm, vmTeam: 0, tracers, holes, blood, dust, sparks, smoke, flashes, booms, preview, marker, mapMesh: null, lights: null, menuMesh: null };
+    const muzzleLight = spec.pointLights > 0 ? new PointLight('#ffc070', 0, 6, 1.5) : null;
+    if (muzzleLight) root.add(muzzleLight);
+    this.w = { lib, spec, root, shared, chars, props, vm, vmTeam: 0, tracers, holes, blood, dust, sparks, smoke, flashes, booms, preview, marker, mapMesh: null, lights: null, menuMesh: null, muzzleLight, muzzleLightFrames: 0 };
     vm.setAspect(this.width / this.height);
     if (this.markerPos) marker.set(this.markerPos);
     if (this.map) this.buildMap(this.map);
@@ -199,6 +204,7 @@ export class GameRenderer {
       else mode = 'deathcam';
     }
     const specId = mode === 'spec' ? l.spectating : -1, localId = l.id;
+    this.specId = specId;
     const hidden = (id: number) => (id === localId && (mode === 'fp' || mode === 'killcam')) || id === specId;
     w.shared.begin();
     w.chars.update(prev, next, alpha, { hidden, clock: this.clock, dt, showAll: false });
@@ -236,7 +242,8 @@ export class GameRenderer {
       camYaw = this.aliveYaw;
     }
     // effects
-    w.tracers.update(dt); w.flashes.update(this.clock); w.booms.update(dt);
+    if (w.muzzleLight && w.muzzleLightFrames-- <= 0) w.muzzleLight.intensity = 0;
+    w.tracers.update(dt); w.flashes.update(); w.booms.update(dt);
     w.dust.update(dt); w.sparks.update(dt); w.smoke.update(dt); w.marker.update(this.clock);
     if (mode === 'fp') w.preview.update(this.eye, preview.yaw, preview.pitch, l.throwHoldT, this.floorAt); else w.preview.update(this.eye, 0, 0, -1, this.floorAt);
     // viewmodel
@@ -247,7 +254,7 @@ export class GameRenderer {
     this.lastYaw = preview.yaw; this.lastPitch = preview.pitch;
     const wid = l.weapon >= 0 ? WEAPON_INDEX[l.weapon] : 'knife';
     const def = WEAPONS[wid];
-    w.vm.update({ dt, speed: l.speed, maxSpeed: l.scoped && def.scopedSpeed ? def.scopedSpeed : def.speed, crouch: l.crouch === 1, grounded: l.grounded === 1, dYaw: big ? 0 : dYaw, dPitch: big ? 0 : dPitch, reloadT: me ? me.reloadT : -1 }, this.clock, this.rig.camera.quaternion);
+    w.vm.update({ dt, speed: l.speed, maxSpeed: l.scoped && def.scopedSpeed ? def.scopedSpeed : def.speed, crouch: l.crouch === 1, grounded: l.grounded === 1, dYaw: big ? 0 : dYaw, dPitch: big ? 0 : dPitch, reloadT: me ? me.reloadT : -1 }, this.rig.camera.quaternion);
     // draw
     gl.info.reset();
     gl.clear(true, true, true);
@@ -285,13 +292,15 @@ export class GameRenderer {
         let origin: Vec3 = d.origin;
         const firstPerson = d.shooter === me && w.vm.weapon !== null && !this.rig.scopedIn && !this.menu;
         if (firstPerson) {
-          w.vm.onShot(d.weapon, this.clock, this.fx);
+          w.vm.onShot(d.weapon, this.fx);
           const p = w.vm.muzzleWorld(this.rig.camera, this.tgt); if (p) origin = v3(p.x, p.y, p.z);
         } else {
           const v = w.chars.views.get(d.shooter);
-          if (v && v.alive) { origin = v3(v.muzzle.x, v.muzzle.y, v.muzzle.z); if (d.weapon !== 'usp' && d.weapon !== 'mp5') w.flashes.add(origin, d.dir, this.clock, this.fx); }
+          // no world flash for a model the camera sits in (scoped human, spectated player)
+          if (v && v.alive) { origin = v3(v.muzzle.x, v.muzzle.y, v.muzzle.z); if (d.weapon !== 'usp' && d.weapon !== 'mp5' && d.shooter !== me && d.shooter !== this.specId) w.flashes.add(origin, d.dir, this.fx); }
         }
         if (d.weapon === 'awp' || n % 2 === 0) w.tracers.add(origin, d.end);
+        if (w.muzzleLight && d.weapon !== 'usp' && d.weapon !== 'mp5') { w.muzzleLight.position.set(origin.x, origin.y, origin.z); w.muzzleLight.intensity = 4 * LIGHT.scale; w.muzzleLightFrames = 1; }
         break;
       }
       case 'hit': {

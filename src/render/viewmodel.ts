@@ -32,7 +32,7 @@ export class Viewmodel {
   private readonly owned: { dispose(): void }[] = [];
   private current: WeaponId | null = null;
   private target: WeaponId | null = null;
-  private flashUntil = -1;
+  private flashFrames = 0;
   private screenT = -1;
   private readonly pose: VmPose = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0, magY: 0, slideZ: 0, swapNow: false };
 
@@ -116,19 +116,19 @@ export class Viewmodel {
   }
   get weapon(): WeaponId | null { return this.current; }
 
-  onShot(weapon: WeaponId, clock: number, rng: Rng): void {
+  onShot(weapon: WeaponId, rng: Rng): void {
     const def = WEAPONS[weapon];
     if (def.slot === 4 || weapon === 'knife') return;
     this.motion.onShot(kickFromPattern(def.pattern[0][0]));
     const muzzle = this.muzzleNode(); if (!muzzle) return;
     muzzle.add(this.flash); this.flash.visible = true; this.flash.rotation.set(0, 0, rng.range(0, Math.PI * 2));
     this.flash.scale.setScalar(rng.range(0.12, 0.25) * (weapon === 'usp' || weapon === 'mp5' ? 0.5 : 1));
-    this.flashUntil = clock + 0.035;
+    this.flashFrames = 2;
   }
   screenFlash(): void { this.screenT = 0; }
   private muzzleNode(): Object3D | undefined { return this.current ? this.group(this.current).getObjectByName('muzzle') : undefined; }
 
-  update(inp: VmInput, clock: number, camQuat: Quaternion): void {
+  update(inp: VmInput, camQuat: Quaternion): void {
     const p = this.motion.update(inp, this.pose);
     if (p.swapNow) this.showNow(this.target);
     this.root.position.set(p.x, p.y, p.z); this.root.rotation.set(p.rx, p.ry, p.rz);
@@ -137,7 +137,7 @@ export class Viewmodel {
       const mag = g.getObjectByName('mag'); if (mag) mag.position.y = p.magY;
       const slide = g.getObjectByName('slide') ?? g.getObjectByName('bolt'); if (slide) slide.position.z = p.slideZ;
     }
-    if (this.flash.visible && clock >= this.flashUntil) this.flash.visible = false;
+    if (this.flash.visible && this.flashFrames-- <= 0) this.flash.visible = false;
     // keep the viewmodel lit like the world: sun direction expressed in camera space
     _q.copy(camQuat).invert(); this.sun.position.copy(SUN_DIR).applyQuaternion(_q).multiplyScalar(5); this.sun.target.position.set(0, 0, 0);
     if (this.screenT >= 0) {
