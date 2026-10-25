@@ -114,6 +114,8 @@ describe('perception: hearing', () => {
     expect(hearSound(sound(v3(25, 0, 17), 40, mate.id), self, f.ctx, normal)).toBe(false);                // teammate
     expect(hearSound(sound(v3(25, 0, 17), 40, self.id), self, f.ctx, normal)).toBe(false);                // self
     expect(hearSound(sound(v3(30, 0, 17), 25, 0), self, f.ctx, normal)).toBe(true);                       // unknown emitter
+    expect(hearSound({ id: 'impact_concrete', pos: v3(28, 1, 17), loudness: 10, player: enemy.id }, self, f.ctx, normal)).toBe(true);
+    expect(f.state.teams.CT.lastEnemySeen.some((e) => e.id === 0 && e.pos.x === 28)).toBe(true);           // impacts do not locate the shooter
     const heard = f.state.teams.CT.lastEnemySeen;
     expect(heard.length).toBeGreaterThan(0);
     expect(heard.every((e) => e.confidence === 0.5 && e.by === self.id)).toBe(true);

@@ -112,7 +112,8 @@ export function hearSound(e: SimEvents['sound'], self: PlayerState, ctx: ThinkCo
   if (e.player) {
     const src = player(ctx.state, e.player);
     if (!src || src.team === self.team || !src.alive) return false;
-    id = src.id;
+    // impacts / whizzes locate the bullet, not the shooter: keep them as an unknown-source noise
+    id = e.id.startsWith('impact_') || e.id === 'bullet_whiz' ? 0 : src.id;
   }
   const d = Math.hypot(e.pos.x - self.pos.x, e.pos.y - self.pos.y, e.pos.z - self.pos.z);
   if (d > e.loudness * cfg.hearingMult) return false;
