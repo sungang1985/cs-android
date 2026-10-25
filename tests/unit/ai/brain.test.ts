@@ -3,10 +3,12 @@ import { describe, it, expect } from 'vitest';
 import { createBotBrain, decide, ecoDecision, nextBuy } from '@/ai/brain';
 import { planTeam } from '@/ai/strategy';
 import { DIFFICULTY } from '@/ai/difficulty';
-import { THROW, burstTicks, counterStrafe, COMBAT } from '@/ai/combat';
+import { THROW, burstTicks, counterStrafe, COMBAT, startThrow, heAim, predictHeBurst } from '@/ai/combat';
+import { yawTo } from '@/ai/steer';
+import { HE } from '@/weapons/defs';
 import { movePlayer, horizontalSpeed } from '@/world/movement';
 import { STRATEGY } from '@/ai/strategy';
-import { v3, DEG } from '@/core/math';
+import { v3, DEG, wrapAngle } from '@/core/math';
 import { Rng } from '@/core/rng';
 import { Btn, cloneCommand, IDLE_COMMAND, type BotStateId, type BotMemory, type PlayerState, type InputCommand } from '@/sim/state';
 import type { SimEnvelope } from '@/sim/events';
@@ -83,6 +85,39 @@ describe('FSM table (stubbed perception)', () => {
     mem.state = 'ENGAGE'; mem.target = x.t.p.id; p.hp = 5; p.lastDamage.tick = x.f.ctx.tick;
     decide(x.f.ctx, p, mem, DIFFICULTY.normal, stubPer(x.t.p.id));
     expect(mem.state).toBe('ENGAGE');
+  });
+  it('INVESTIGATE goals from sounds above the floor snap to a floor nav node, so the bot arrives', () => {
+    const x = setup(); x.f.state.round.roundNumber = 1; planTeam('CT', x.f.ctx);
+    const { p, mem } = x.ct;
+    place(p, 43, 0, 13); parkOthers(x.f, [p]);
+    mem.profile.aggression = 0.8; mem.state = 'MOVE'; mem.stateSinceTick = x.f.ctx.tick - 1;
+    mem.goal = { ...x.f.state.teams.CT.assignments[p.id] };
+    // a gunshot heard at the shooter's eye (floor + 1.65 m)
+    x.f.state.teams.CT.lastEnemySeen.push({ id: x.t.p.id, pos: v3(36.2, 1.65, 13.3), tick: x.f.ctx.tick, confidence: 0.5, by: p.id });
+    decide(x.f.ctx, p, mem, DIFFICULTY.normal, stubPer());
+    expect(mem.state).toBe('INVESTIGATE');
+    const g = mem.goal!;
+    expect(x.f.ctx.nav.nodes.some((n) => n.pos.x === g.pos.x && n.pos.y === g.pos.y && n.pos.z === g.pos.z)).toBe(true);
+    expect(Math.abs(g.pos.y)).toBeLessThan(0.1);
+    expect(Math.hypot(g.pos.x - 36.2, g.pos.z - 13.3)).toBeLessThan(1);
+    // standing on the goal counts as arrived → PLAN → MOVE (not 15 s of idling under a raised goal)
+    place(p, g.pos.x, g.pos.y, g.pos.z); mem.corners = []; mem.pathIdx = 0;
+    setTick(x.f, x.f.ctx.tick + 6);
+    decide(x.f.ctx, p, mem, DIFFICULTY.normal, stubPer());
+    expect(mem.state).toBe('MOVE');
+  });
+  it('TDM respawn (state PLAN set by the rules, no goal) resyncs the aim to the spawn facing', () => {
+    const x = setup({ mode: 'tdm' }); planTeam('CT', x.f.ctx);
+    const { p, mem } = x.ct;
+    place(p, 43, 0, 13, 30); parkOthers(x.f, [p]);
+    const b = brainOf('normal');
+    // as tdmRespawn leaves it: placed at the spawn yaw, aim still from the death 120° away
+    mem.state = 'PLAN'; mem.goal = null; mem.path = []; mem.corners = []; mem.pathIdx = 0;
+    mem.aimYaw = p.yaw + 120 * DEG; mem.aimPitch = -20 * DEG;
+    setTick(x.f, x.f.ctx.tick + 1); mem.stateSinceTick = x.f.ctx.tick;
+    const c = b.think(x.f.ctx, p, mem);
+    expect(Math.abs(wrapAngle(c.yaw - p.yaw))).toBeLessThanOrEqual(DIFFICULTY.normal.turnRateDeg / 60 * DEG + 1e-9);
+    expect(Math.abs(c.pitch - p.pitch)).toBeLessThanOrEqual(DIFFICULTY.normal.turnRateDeg / 60 * DEG + 1e-9);
   });
 });
 
@@ -362,6 +397,47 @@ describe('combat', () => {
     const lastThrow = cmds.map((c) => (c.buttons & Btn.THROW) !== 0).lastIndexOf(true);
     expect(lastThrow).toBeLessThan(cmds.length - 1);              // released
     expect([THROW.after, THROW.used]).toContain(ct.mem.burstLeft);
+  });
+
+  it('flash: the look-away starts only after the grenade leaves the hand (release waits for the slot-4 switch)', () => {
+    const f = makeFixture({ humanTeam: 'T', difficulty: 'hard' }); setTick(f, 1000); setLive(f, 20);
+    const ct = botsOf(f, 'CT')[0];
+    parkOthers(f, [ct.p]);
+    planTeam('CT', f.ctx);
+    ct.mem.state = 'HOLD'; ct.mem.holdUntilTick = 1e9; ct.mem.goal = { ...f.state.teams.CT.assignments[ct.p.id] };
+    place(ct.p, ct.mem.goal.pos.x, ct.mem.goal.pos.y, ct.mem.goal.pos.z, 90); ct.p.inv.flash = 1;
+    ct.mem.aimYaw = ct.p.yaw; ct.mem.aimPitch = 0;
+    const target = v3(ct.p.pos.x - 6, 1.2, ct.p.pos.z);
+    startThrow(ct.mem, 'flash', target);
+    const want = yawTo(ct.p.pos, target, ct.p.yaw);
+    // weapons-lane stand-in (§4.4): THROW edge → switch to slot 4 (15 ticks), release at max(release, switch end)
+    const b = brainOf('hard'); let releaseYaw = NaN, released = -1, prev = 0, away = 0;
+    for (let i = 0; i < 160; i++) {
+      setTick(f, f.ctx.tick + 1);
+      const c = b.think(f.ctx, ct.p, ct.mem); ct.p.yaw = c.yaw; ct.p.pitch = c.pitch;
+      const tick = f.ctx.tick, held = (c.buttons & Btn.THROW) !== 0;
+      if (ct.p.throwing && !held && tick >= ct.p.inv.switchEndsTick) { ct.p.throwing = null; releaseYaw = c.yaw; released = tick; ct.p.inv.flash = 0; }
+      else if (!ct.p.throwing && held && !(prev & Btn.THROW) && released < 0) { ct.p.throwing = { startTick: tick, returnSlot: 1 }; ct.p.inv.switchEndsTick = tick + 15; }
+      prev = c.buttons;
+      if (released > 0) away = Math.max(away, Math.abs(wrapAngle(c.yaw - want)));
+    }
+    expect(released).toBeGreaterThan(0);
+    expect(Math.abs(wrapAngle(releaseYaw - want))).toBeLessThan(5 * DEG);        // thrown at the target, not ~108° off
+    expect(away).toBeGreaterThan(90 * DEG);                                       // then looked away
+  });
+
+  it('HE: heAim skips throws that bounce back onto the thrower and keeps ones predicted to land on the target', () => {
+    const f = makeFixture({ humanTeam: 'T' }); setTick(f, 1000);
+    const ct = botsOf(f, 'CT')[0];
+    place(ct.p, 34, 0, 17, 90);
+    const blocked = v3(38, 1.65, 15);                     // behind the wall 4.5 m away: the naive throw rolls back to ~3 m
+    expect(Math.hypot(predictHeBurst(f.ctx, ct.p, blocked).x - 34, predictHeBurst(f.ctx, ct.p, blocked).z - 17)).toBeLessThan(HE.radius + COMBAT.heSelfMargin);
+    expect(heAim(f.ctx, ct.p, blocked)).toBeNull();
+    const open = v3(22, 1.65, 17);
+    const aim = heAim(f.ctx, ct.p, open);
+    expect(aim).not.toBeNull();
+    const burst = predictHeBurst(f.ctx, ct.p, aim!);
+    expect(Math.hypot(burst.x - open.x, burst.z - open.z)).toBeLessThanOrEqual(COMBAT.heLandXZ);
   });
 });
 

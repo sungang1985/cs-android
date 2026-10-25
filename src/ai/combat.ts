@@ -8,7 +8,8 @@
 import { v3, v3dot, v3len, v3sub, dirFromYawPitch, clamp, wrapAngle, DEG, type Vec3 } from '../core/math';
 import type { ThinkContext } from '../sim/brain';
 import { Btn, DT, type PlayerState, type BotMemory, type InputCommand, type Slot } from '../sim/state';
-import { WEAPONS, type WeaponDef } from '../weapons/defs';
+import { WEAPONS, GRENADE, HE, type WeaponDef } from '../weapons/defs';
+import { grenadeLaunch, integrateGrenade } from '../weapons/grenade';
 import { activeWeaponId, activeSlotState } from '../weapons/inventory';
 import { eyePos, horizontalSpeed, MOVE } from '../world/movement';
 import type { DifficultyCfg } from './difficulty';
@@ -20,6 +21,9 @@ export const COMBAT = {
   pistolRate: 0.7, awpZoomTicks: 15, awpBoltTicks: 90, awpAimDeg: 0.5, knifeRange: 3, pistolSwitchRange: 6,
   peekP: 0.35, peekTicks: Math.round((1.5 / 4.3) * 60), crouchP: 0.4, counterStopSpeed: 0.3, strafeFlip: [18, 30] as [number, number],
   heRange: 15, heMinDist: 4, flashRange: 12, throwHoldTicks: 6, flashLookAwayTicks: 96, heRecoverTicks: 20,
+  /** HE throw check (heAim): the predicted burst must land within heLandXZ (XZ) / heLandY of the target and
+   *  farther than HE radius + heSelfMargin from the thrower. */
+  heLandXZ: 2.5, heLandY: 2.5, heSelfMargin: 0.5, heAimPull: [1, 0.7, 0.45] as readonly number[],
   /** engageRange() table, metres: the longest duel a bot starts with that gun class (the mid sightline is ~40 m). */
   engageRange: { sniper: 90, rifle: 65, deagle: 40, melee: 20, other: 30 },
 } as const;
@@ -220,7 +224,10 @@ export function courageAbort(ctx: ThinkContext, self: PlayerState, cfg: Difficul
 
 // ───────── grenades ─────────
 
-/** HE target (§6.6, Normal+): a heard-but-unseen group of ≥ 2 enemies within 15 m, or a known enemy on the attacked site. */
+/**
+ * HE target (§6.6, Normal+): a heard-but-unseen group of ≥ 2 enemies within 15 m, or a known enemy on the attacked site.
+ * Returns the aim point (heAim) of a throw predicted to land there, else null.
+ */
 export function heTarget(ctx: ThinkContext, self: PlayerState, mem: BotMemory, cfg: DifficultyCfg): Vec3 | null {
   if (cfg.grenades === 'none' || self.inv.he <= 0) return null;
   const st = ctx.state, tick = ctx.tick, bb = st.teams[self.team];
@@ -232,13 +239,50 @@ export function heTarget(ctx: ThinkContext, self: PlayerState, mem: BotMemory, c
     if (bb.lastEnemySeen.some((o) => o.id === e.id && o.confidence === 1 && tick - o.tick < 60)) continue;   // seen, not just heard
     ids.push(e.id); sx += e.pos.x; sy += e.pos.y; sz += e.pos.z;
   }
-  if (ids.length >= 2) return v3(sx / ids.length, sy / ids.length, sz / ids.length);
+  if (ids.length >= 2) { const a = heAim(ctx, self, v3(sx / ids.length, sy / ids.length, sz / ids.length)); if (a) return a; }
   const site = mem.goal?.site;
   if (!site) return null;
   for (const e of bb.lastEnemySeen) {
     if (tick - e.tick > 180 || !e.id) continue;
     const d = distXZ(e.pos, self.pos);
-    if (d <= COMBAT.heRange && d >= COMBAT.heMinDist && st.round.phase !== 'FREEZE' && ctx.map.areaAt(e.pos.x, e.pos.z) === (site === 'a' ? 'site_a' : 'site_b')) return copyV(e.pos);
+    if (d <= COMBAT.heRange && d >= COMBAT.heMinDist && st.round.phase !== 'FREEZE' && ctx.map.areaAt(e.pos.x, e.pos.z) === (site === 'a' ? 'site_a' : 'site_b')) { const a = heAim(ctx, self, e.pos); if (a) return a; }
+  }
+  return null;
+}
+
+/** Lob aim for a 12 m/s release at `target` from `eye` (+10° pitch-up is added at launch, §4.4). */
+export function throwAim(eye: Vec3, target: Vec3, refYaw: number): { yaw: number; pitch: number } {
+  const d = distXZ(eye, target);
+  const lob = 0.5 * Math.asin(clamp((GRENADE.gravity * d) / (GRENADE.speed * GRENADE.speed), 0, 1)) - GRENADE.pitchUp * DEG;
+  return { yaw: yawTo(eye, target, refYaw), pitch: clamp(Math.max(lob, pitchTo(eye, target)), -30 * DEG, 40 * DEG) };
+}
+
+/** Predicted HE burst point for a throw from where the bot stands at throwAim(aimAt) (fuse; stops once at rest). */
+export function predictHeBurst(ctx: ThinkContext, self: PlayerState, aimAt: Vec3): Vec3 {
+  eyePos(self, _eye);
+  const aim = throwAim(_eye, aimAt, self.yaw);
+  const g = grenadeLaunch({ pos: self.pos, crouched: self.crouched, yaw: aim.yaw, pitch: aim.pitch }, GRENADE.speed);
+  const fuse = ticks(HE.fuseSec);
+  for (let i = 0; i < fuse; i++) {
+    integrateGrenade(g, ctx.world);
+    if (i > 10 && Math.hypot(g.vel.x, g.vel.y, g.vel.z) < 0.05) break;
+  }
+  return g.pos;
+}
+
+/**
+ * Aim point for an HE at `target`, or null when no throw from here would land there. Simulates the real grenade
+ * physics (§4.4) for the aim point at the target and, since a grenade bounces and rolls on past its first impact,
+ * for points pulled back toward the bot (COMBAT.heAimPull). A throw counts when the burst is within heLandXZ / heLandY
+ * of the target and clear of the thrower (HE self-damage is on): throws that fall short, hit a wall and roll back or
+ * overshoot are skipped.
+ */
+export function heAim(ctx: ThinkContext, self: PlayerState, target: Vec3): Vec3 | null {
+  for (const k of COMBAT.heAimPull) {
+    const p = v3(self.pos.x + (target.x - self.pos.x) * k, target.y, self.pos.z + (target.z - self.pos.z) * k);
+    const b = predictHeBurst(ctx, self, p);
+    const dSelf = Math.hypot(b.x - self.pos.x, b.y - (self.pos.y + 1), b.z - self.pos.z);
+    if (distXZ(b, target) <= COMBAT.heLandXZ && Math.abs(b.y - target.y) <= COMBAT.heLandY && dSelf > HE.radius + COMBAT.heSelfMargin) return p;
   }
   return null;
 }
@@ -274,6 +318,9 @@ export function throwTick(ctx: ThinkContext, self: PlayerState, mem: BotMemory, 
   const tick = ctx.tick;
   cmd.moveX = 0; cmd.moveZ = 0;
   if (mem.burstLeft === THROW.after) {
+    // THROW is up but the weapons lane releases at max(release, switchEndsTick) (§4.4): keep the aim (and the
+    // after-throw window) frozen until the grenade has actually left the hand
+    if (self.throwing) { mem.pauseUntilTick++; return true; }
     if (tick >= mem.pauseUntilTick) { mem.burstLeft = THROW.used; return false; }
     if (mem.lastKnown && mem.pauseUntilTick - tick > COMBAT.heRecoverTicks) trackAim(mem, yawTo(self.pos, mem.lastKnown, mem.aimYaw) + Math.PI, 0, 0.1, cfg.turnRateDeg);
     return true;
@@ -282,9 +329,8 @@ export function throwTick(ctx: ThinkContext, self: PlayerState, mem: BotMemory, 
   if (!mem.lastKnown || (kind === 'he' ? self.inv.he : self.inv.flash) <= 0) { mem.burstLeft = THROW.used; return false; }
   cmd.grenade = kind === 'he' ? 1 : 2;
   eyePos(self, _eye);
-  const d = distXZ(_eye, mem.lastKnown);
-  const lob = 0.5 * Math.asin(clamp((20 * d) / 144, 0, 1)) - 10 * DEG;     // 12 m/s release, g 20, +10° above aim (§4.4)
-  const wantYaw = yawTo(_eye, mem.lastKnown, mem.aimYaw), wantPitch = clamp(Math.max(lob, pitchTo(_eye, mem.lastKnown)), -30 * DEG, 40 * DEG);
+  const aim = throwAim(_eye, mem.lastKnown, mem.aimYaw);                    // 12 m/s release, g 20, +10° above aim (§4.4)
+  const wantYaw = aim.yaw, wantPitch = aim.pitch;
   trackAim(mem, wantYaw, wantPitch, 0.1, cfg.turnRateDeg);
   if (mem.pauseUntilTick === 0) {
     if (Math.abs(wrapAngle(wantYaw - mem.aimYaw)) < 4 * DEG && Math.abs(wantPitch - mem.aimPitch) < 4 * DEG) { mem.pauseUntilTick = tick + COMBAT.throwHoldTicks; cmd.buttons |= Btn.THROW; }

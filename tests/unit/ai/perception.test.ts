@@ -116,6 +116,14 @@ describe('perception: hearing', () => {
     expect(hearSound(sound(v3(30, 0, 17), 25, 0), self, f.ctx, normal)).toBe(true);                       // unknown emitter
     expect(hearSound({ id: 'impact_concrete', pos: v3(28, 1, 17), loudness: 10, player: enemy.id }, self, f.ctx, normal)).toBe(true);
     expect(f.state.teams.CT.lastEnemySeen.some((e) => e.id === 0 && e.pos.x === 28)).toBe(true);           // impacts do not locate the shooter
+    // grenade bounces / bursts locate the grenade, not the thrower; the pin pull is at the thrower's eye
+    for (const [id, x] of [['he_bounce', 26], ['he_explode', 27], ['flash_explode', 29]] as const) {
+      expect(hearSound({ id, pos: v3(x, 0.1, 17), loudness: 60, player: enemy.id }, self, f.ctx, normal)).toBe(true);
+      expect(f.state.teams.CT.lastEnemySeen.some((e) => e.id === enemy.id && e.pos.x === x)).toBe(false);
+      expect(f.state.teams.CT.lastEnemySeen.some((e) => e.id === 0 && e.pos.x === x)).toBe(true);
+    }
+    expect(hearSound({ id: 'he_pin', pos: v3(26.5, 1.65, 17), loudness: 5, player: enemy.id }, self, f.ctx, normal)).toBe(true);
+    expect(f.state.teams.CT.lastEnemySeen.some((e) => e.id === enemy.id && e.pos.x === 26.5)).toBe(true);
     const heard = f.state.teams.CT.lastEnemySeen;
     expect(heard.length).toBeGreaterThan(0);
     expect(heard.every((e) => e.confidence === 0.5 && e.by === self.id)).toBe(true);
