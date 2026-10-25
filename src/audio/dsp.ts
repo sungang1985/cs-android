@@ -153,3 +153,56 @@ export function zeroCrossingFreq(buf: Mono, sr = SAMPLE_RATE): number {
   let c = 0; for (let i = 1; i < buf.length; i++) if ((buf[i - 1] < 0) !== (buf[i] < 0)) c++;
   return (c / 2) / (buf.length / sr);
 }
+
+// ───────── additive extensions (L7): time-varying filter, loop cross-fade, impulse crackle ─────────
+
+/** RBJ biquad coefficients [b0, b1, b2, a1, a2] (normalised by a0); same formulas as `biquad`. */
+export function biquadCoeffs(type: BiquadType, freq: number, q = 0.707, gainDb = 0, sr = SAMPLE_RATE): [number, number, number, number, number] {
+  const w0 = (2 * Math.PI * Math.min(Math.max(freq, 1), sr / 2 - 1)) / sr;
+  const cos = Math.cos(w0), sin = Math.sin(w0), alpha = sin / (2 * q), A = Math.pow(10, gainDb / 40);
+  let b0: number, b1: number, b2: number, a0: number, a1: number, a2: number;
+  switch (type) {
+    case 'lowpass': b0 = (1 - cos) / 2; b1 = 1 - cos; b2 = (1 - cos) / 2; a0 = 1 + alpha; a1 = -2 * cos; a2 = 1 - alpha; break;
+    case 'highpass': b0 = (1 + cos) / 2; b1 = -(1 + cos); b2 = (1 + cos) / 2; a0 = 1 + alpha; a1 = -2 * cos; a2 = 1 - alpha; break;
+    case 'bandpass': b0 = alpha; b1 = 0; b2 = -alpha; a0 = 1 + alpha; a1 = -2 * cos; a2 = 1 - alpha; break;
+    case 'notch': b0 = 1; b1 = -2 * cos; b2 = 1; a0 = 1 + alpha; a1 = -2 * cos; a2 = 1 - alpha; break;
+    case 'peaking': b0 = 1 + alpha * A; b1 = -2 * cos; b2 = 1 - alpha * A; a0 = 1 + alpha / A; a1 = -2 * cos; a2 = 1 - alpha / A; break;
+  }
+  return [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0];
+}
+
+/** Biquad whose cutoff sweeps exponentially from f0 to f1 over the buffer (coefficients refreshed every 16 samples), in place. */
+export function biquadSweep(buf: Mono, type: BiquadType, f0: number, f1: number, q = 0.707, sr = SAMPLE_RATE): Mono {
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  let c = biquadCoeffs(type, f0, q, 0, sr);
+  const n = buf.length;
+  for (let i = 0; i < n; i++) {
+    if ((i & 15) === 0) c = biquadCoeffs(type, f0 * Math.pow(f1 / f0, i / Math.max(1, n - 1)), q, 0, sr);
+    const x0 = buf[i];
+    const y0 = c[0] * x0 + c[1] * x1 + c[2] * x2 - c[3] * y1 - c[4] * y2;
+    x2 = x1; x1 = x0; y2 = y1; y1 = y0;
+    buf[i] = y0;
+  }
+  return buf;
+}
+
+/**
+ * Seamless loop: the first `loopSec` of `buf` with its head cross-faded (equal power) against the `fadeSec`
+ * that follow the loop end, so sample[last] → sample[0] continues the waveform. Needs ≥ (loopSec + fadeSec) · sr samples.
+ */
+export function loopCrossfade(buf: Mono, loopSec: number, fadeSec: number, sr = SAMPLE_RATE): Mono {
+  const n = Math.round(loopSec * sr), f = Math.min(Math.round(fadeSec * sr), buf.length - n);
+  const out = buf.slice(0, n);
+  for (let i = 0; i < f; i++) { const t = i / f; out[i] = buf[i] * Math.sin((t * Math.PI) / 2) + buf[n + i] * Math.cos((t * Math.PI) / 2); }
+  return out;
+}
+
+/** Sparse, decaying impulse crackle (grit, debris): `count` short noise ticks spread over `seconds`. */
+export function crackle(seconds: number, count: number, rng: Rng, sr = SAMPLE_RATE): Mono {
+  const out = silence(seconds, sr);
+  for (let k = 0; k < count; k++) {
+    const at = Math.floor(rng.next() * Math.max(1, out.length - 64)), amp = (0.3 + 0.7 * rng.next()) * Math.exp(-(at / sr) / (seconds * 0.5)), len = 16 + Math.floor(rng.next() * 48);
+    for (let i = 0; i < len && at + i < out.length; i++) out[at + i] += (rng.next() * 2 - 1) * amp * (1 - i / len);
+  }
+  return out;
+}

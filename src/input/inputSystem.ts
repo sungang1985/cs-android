@@ -1,107 +1,179 @@
 /**
- * InputSystem (§11.8). DAY-0 STUB: desktop keyboard + mouse (pointer lock) only, no touch layer, so the app is
- * playable on a laptop and e2e tests can drive it with setInput. L7 implements touch/joystick/gyro/aim assist.
+ * InputSystem (§7, §11.8): merges touch (touch.ts + joystick.ts + layout.ts), desktop keyboard/mouse
+ * (keyboard.ts) and gyro (gyro.ts) into one InputCommand per tick. Look deltas accumulate between ticks in
+ * radians (sens, FOV, scoped sens, acceleration) and are consumed by sample(); previewLook() shows the
+ * not-yet-consumed delta through the same applyAimAssist (dt = 0). Presses are latched until the next sample().
  */
 import { DEG, clamp, wrapAngle } from '../core/math';
 import { Btn, IDLE_COMMAND, cloneCommand, type InputCommand, type AimCandidate, type SnapLocal, type LookPreview, type ItemId } from '../sim/state';
 import type { ControlSettings, TouchLayout } from '../settings/types';
-import { applyAimAssist } from './aimAssist';
+import { AWP_FOV } from '../weapons/defs';
+import { applyAimAssist, autoFireStep, autoReloadStep, createAutoState } from './aimAssist';
+import { TouchLayer, type UiActionId } from './touch';
+import { DesktopInput } from './keyboard';
+import { GyroInput } from './gyro';
+
+export type { UiActionId } from './touch';
+
+/** 0.022° per px at sens 1 (§7.4); pitch is 0.85 × yaw; mouse is 1/8 of touch. */
+export const LOOK_DEG_PER_PX = 0.022;
+export const PITCH_RATIO = 0.85;
+export const MOUSE_DIVISOR = 8;
+const PITCH_LIMIT = 89 * DEG;
+
+export interface InputOptions { now?: () => number; uiRoot?: HTMLElement | null }
 
 export class InputSystem {
   private look: LookPreview = { yaw: 0, pitch: 0 };
-  private pendingDelta = { yaw: 0, pitch: 0 };
-  private held = 0; private latched = 0;
+  private readonly pending = { yaw: 0, pitch: 0 };
+  private dragged = false;
+  private latched = 0;
   private slot: InputCommand['slot'] = 0; private grenade: InputCommand['grenade'] = 0;
   private buyItem: ItemId | null = null; private spectateDir: -1 | 0 | 1 = 0;
-  private keys = new Set<string>();
   private attached = false;
-  private pointerLocked = false;
-  private touchVisible = true;
   private settings: ControlSettings;
   private layout: TouchLayout;
-  private readonly onKeyDown = (e: KeyboardEvent) => { if (e.repeat) return; this.keys.add(e.code); this.keyPress(e.code); };
-  private readonly onKeyUp = (e: KeyboardEvent) => { this.keys.delete(e.code); };
-  private readonly onMouseMove = (e: MouseEvent) => { if (!this.pointerLocked) return; const k = (0.022 * DEG * this.settings.sens) / 8; this.pendingDelta.yaw -= e.movementX * k; this.pendingDelta.pitch -= e.movementY * k * 0.85; };
-  private readonly onMouseDown = (e: MouseEvent) => { if (!this.pointerLocked) { this.root.requestPointerLock?.(); return; } if (e.button === 0) { this.held |= Btn.FIRE; this.latched |= Btn.FIRE; } if (e.button === 2) { this.held |= Btn.SCOPE; this.latched |= Btn.SCOPE; } };
-  private readonly onMouseUp = (e: MouseEvent) => { if (e.button === 0) this.held &= ~Btn.FIRE; if (e.button === 2) this.held &= ~Btn.SCOPE; };
-  private readonly onLockChange = () => { this.pointerLocked = document.pointerLockElement === this.root; };
-  private readonly onWheel = (e: WheelEvent) => { this.slot = (e.deltaY > 0 ? 2 : 1) as InputCommand['slot']; };
+  private local: SnapLocal | null = null;
+  private scoped: 0 | 1 | 2 = 0;
+  private readonly auto = createAutoState();
+  private uiHandler: ((id: UiActionId, down?: boolean) => void) | null = null;
+  private readonly now: () => number;
+  readonly touch: TouchLayer;
+  readonly desktop: DesktopInput;
+  readonly gyro = new GyroInput();
 
-  constructor(private readonly root: HTMLElement, settings: ControlSettings, layout: TouchLayout) { this.settings = settings; this.layout = layout; }
-
-  private keyPress(code: string): void {
-    switch (code) {
-      case 'Space': this.latched |= Btn.JUMP; break;
-      case 'KeyR': this.latched |= Btn.RELOAD; break;
-      case 'KeyE': this.latched |= Btn.USE; break;
-      case 'KeyG': this.latched |= Btn.DROP; break;
-      case 'Digit1': this.slot = 1; break; case 'Digit2': this.slot = 2; break; case 'Digit3': this.slot = 3; break; case 'Digit4': this.slot = 4; break;
-      case 'ArrowLeft': this.spectateDir = -1; break; case 'ArrowRight': this.spectateDir = 1; break;
-    }
+  constructor(private readonly root: HTMLElement, settings: ControlSettings, layout: TouchLayout, opts: InputOptions = {}) {
+    this.settings = settings; this.layout = layout;
+    this.now = opts.now ?? (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()));
+    const host = opts.uiRoot ?? (typeof document !== 'undefined' ? document.getElementById('ui') : null) ?? root.parentElement ?? document.body;
+    this.touch = new TouchLayer(host, layout, {
+      local: () => this.local,
+      settings: () => this.settings,
+      look: (dx, dy) => this.addLookPx(dx, dy, 1),
+      uiAction: (id, down) => this.emitUi(id, down),
+      lookPointers: (n) => { this.gyro.active = this.settings.gyro === 'always' || (this.settings.gyro === 'drag' && n > 0); if (n === 0 && this.settings.gyro === 'drag') this.gyro.recentre(); },
+      firstTouch: () => { if (this.settings.gyro !== 'off') this.gyro.requestPermission(); },
+    }, this.now);
+    this.desktop = new DesktopInput(root, {
+      local: () => this.local,
+      mouseLook: (dx, dy) => this.addLookPx(dx, dy, 1 / MOUSE_DIVISOR),
+      uiAction: (id, down) => this.emitUi(id, down),
+    }, this.now);
   }
 
-  private heldFromKeys(): number {
-    let b = this.held;
-    if (this.keys.has('Space')) b |= Btn.JUMP;
-    if (this.keys.has('ControlLeft') || this.keys.has('ControlRight')) b |= Btn.CROUCH;
-    if (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) b |= Btn.WALK;
-    if (this.keys.has('KeyE')) b |= Btn.USE;
-    if (this.keys.has('KeyR')) b |= Btn.RELOAD;
-    return b;
+  // ───────── look ─────────
+  /** Radians per CSS px for the current sens / FOV / scope state (§7.4). */
+  lookScale(): number {
+    const s = this.settings;
+    const sens = this.scoped ? s.sensScoped : s.sens;
+    const fov = this.scoped ? AWP_FOV[this.scoped] : s.fovDeg;
+    return LOOK_DEG_PER_PX * DEG * sens * (fov / 75);
   }
 
-  private consumeLook(candidates: AimCandidate[], local: SnapLocal, dt: number): void {
-    const d = applyAimAssist(this.pendingDelta, this.look, { x: local.eyeX, y: local.eyeY, z: local.eyeZ }, candidates, this.settings.aimAssist, dt, this.pendingDelta.yaw !== 0 || this.pendingDelta.pitch !== 0, false);
-    this.look.yaw = wrapAngle(this.look.yaw + d.yaw);
-    this.look.pitch = clamp(this.look.pitch + d.pitch, -89 * DEG, 89 * DEG);
-    this.pendingDelta.yaw = 0; this.pendingDelta.pitch = 0;
+  private addLookPx(dx: number, dy: number, mult: number): void {
+    const k = this.lookScale() * mult;
+    this.pending.yaw -= dx * k;
+    this.pending.pitch -= dy * k * PITCH_RATIO;
+    this.dragged = true;
   }
 
+  private pullGyro(): void {
+    const g = this.gyro.consume();
+    if (this.settings.gyro === 'off' || (g.yaw === 0 && g.pitch === 0)) return;
+    this.pending.yaw += g.yaw * this.settings.gyroSens;
+    this.pending.pitch += g.pitch * this.settings.gyroSens;
+  }
+
+  private assisted(candidates: AimCandidate[], local: SnapLocal, dt: number, strafing: boolean): { yaw: number; pitch: number } {
+    const dragging = this.dragged || this.pending.yaw !== 0 || this.pending.pitch !== 0;
+    return applyAimAssist(this.pending, this.look, { x: local.eyeX, y: local.eyeY, z: local.eyeZ }, local.alive === 1 ? candidates : [], this.settings.aimAssist, dt, dragging, strafing);
+  }
+
+  // ───────── per tick ─────────
   sample(tick: number, candidates: AimCandidate[], local: SnapLocal): InputCommand {
-    this.consumeLook(candidates, local, 1 / 60);
+    this.noteLocal(local);
+    this.pullGyro();
+    const touchMove = this.touch.move();
+    const keyMove = this.desktop.move();
+    const move = touchMove.active ? touchMove : keyMove;
+    const d = this.assisted(candidates, local, 1 / 60, Math.abs(move.x) > 1e-3);
+    this.look.yaw = wrapAngle(this.look.yaw + d.yaw);
+    this.look.pitch = clamp(this.look.pitch + d.pitch, -PITCH_LIMIT, PITCH_LIMIT);
+    this.pending.yaw = 0; this.pending.pitch = 0; this.dragged = false;
+
     const c = cloneCommand(IDLE_COMMAND, tick);
     c.yaw = this.look.yaw; c.pitch = this.look.pitch;
-    let mx = 0, mz = 0;
-    if (this.keys.has('KeyW')) mz += 1; if (this.keys.has('KeyS')) mz -= 1; if (this.keys.has('KeyD')) mx += 1; if (this.keys.has('KeyA')) mx -= 1;
-    const len = Math.hypot(mx, mz); if (len > 1) { mx /= len; mz /= len; }
-    c.moveX = mx; c.moveZ = mz;
-    c.buttons = this.heldFromKeys() | this.latched; this.latched = 0;
-    c.slot = this.slot; this.slot = 0; c.grenade = this.grenade; this.grenade = 0;
-    c.buy = this.buyItem; this.buyItem = null; c.spectate = this.spectateDir; this.spectateDir = 0;
+    c.moveX = move.x; c.moveZ = move.z;
+    let b = this.touch.heldBits() | this.touch.latched | this.desktop.held() | this.desktop.latched | this.latched;
+    if (autoFireStep(this.auto, local, this.settings.autoFire)) b |= Btn.FIRE;
+    if (autoReloadStep(this.auto, local, candidates.length, this.settings.autoReload)) b |= Btn.RELOAD;
+    c.buttons = b;
+    this.touch.latched = 0; this.desktop.latched = 0; this.latched = 0;
+    c.slot = this.touch.slot || this.desktop.slot || this.slot; this.touch.slot = 0; this.desktop.slot = 0; this.slot = 0;
+    c.grenade = this.touch.grenade || this.desktop.grenade || this.grenade; this.touch.grenade = 0; this.desktop.grenade = 0; this.grenade = 0;
+    c.buy = this.buyItem; this.buyItem = null;
+    c.spectate = this.touch.spectate || this.desktop.spectate || this.spectateDir; this.touch.spectate = 0; this.desktop.spectate = 0; this.spectateDir = 0;
     return c;
   }
 
   previewLook(candidates: AimCandidate[], local: SnapLocal): LookPreview {
-    const d = applyAimAssist(this.pendingDelta, this.look, { x: local.eyeX, y: local.eyeY, z: local.eyeZ }, candidates, this.settings.aimAssist, 0, this.pendingDelta.yaw !== 0, false);
-    return { yaw: wrapAngle(this.look.yaw + d.yaw), pitch: clamp(this.look.pitch + d.pitch, -89 * DEG, 89 * DEG) };
+    this.pullGyro();
+    const touchMove = this.touch.move();
+    const strafing = Math.abs(touchMove.active ? touchMove.x : this.desktop.move().x) > 1e-3;
+    const d = this.assisted(candidates, local, 0, strafing);
+    return { yaw: wrapAngle(this.look.yaw + d.yaw), pitch: clamp(this.look.pitch + d.pitch, -PITCH_LIMIT, PITCH_LIMIT) };
   }
 
+  private noteLocal(local: SnapLocal): void {
+    this.local = local;
+    this.scoped = local.scoped;
+    this.desktop.noteActiveSlot(local.activeSlot);
+    if (this.attached) this.touch.update(local);
+  }
+
+  // ───────── UI → next command ─────────
   press(btn: number): void { this.latched |= btn; }
   setBuy(item: ItemId): void { this.buyItem = item; }
   spectate(dir: -1 | 1): void { this.spectateDir = dir; }
   selectSlot(slot: InputCommand['slot']): void { this.slot = slot; }
   selectGrenade(g: InputCommand['grenade']): void { this.grenade = g; }
-  setLayout(l: TouchLayout): void { this.layout = l; }
+  /** UI-originated actions the input layer cannot reach on its own (Buy pill, pause, B/Tab/Esc). */
+  onUiAction(fn: (id: UiActionId, down?: boolean) => void): void { this.uiHandler = fn; }
+  private emitUi(id: UiActionId, down?: boolean): void { this.uiHandler?.(id, down); }
+  /** Desktop: leave pointer lock without the lock-loss pause (call when a modal screen opens). */
+  releasePointer(): void { this.desktop.releaseLock(); }
+  /** Optional: forces the Use pill (1 plant, 2 defuse, 3 pick up) when the app knows an action is available. */
+  setUseHint(a: 0 | 1 | 2 | 3): void { this.touch.setUseHint(a); }
+
+  // ───────── configuration ─────────
+  setLayout(l: TouchLayout): void { this.layout = l; this.touch.setLayout(l); }
   getLayout(): TouchLayout { return this.layout; }
-  setSettings(s: ControlSettings): void { this.settings = s; }
-  setTouchVisible(b: boolean): void { this.touchVisible = b; }
-  isTouchVisible(): boolean { return this.touchVisible; }
-  setLook(yaw: number, pitch: number): void { this.look.yaw = yaw; this.look.pitch = pitch; this.pendingDelta.yaw = 0; this.pendingDelta.pitch = 0; }
+  setSettings(s: ControlSettings): void {
+    this.settings = s;
+    if (this.attached && s.gyro !== 'off') { this.gyro.start(); this.gyro.active = s.gyro === 'always'; } else this.gyro.stop();
+  }
+  getSettings(): ControlSettings { return this.settings; }
+  setTouchVisible(b: boolean): void { this.touch.setUserVisible(b); }
+  isTouchVisible(): boolean { return this.touch.userEnabled; }
+  gyroAvailable(): boolean { return GyroInput.available(); }
+  setLook(yaw: number, pitch: number): void { this.look.yaw = wrapAngle(yaw); this.look.pitch = clamp(pitch, -PITCH_LIMIT, PITCH_LIMIT); this.pending.yaw = 0; this.pending.pitch = 0; this.gyro.consume(); }
   getLook(): LookPreview { return { yaw: this.look.yaw, pitch: this.look.pitch }; }
+
   attach(): void {
     if (this.attached) return; this.attached = true;
-    window.addEventListener('keydown', this.onKeyDown); window.addEventListener('keyup', this.onKeyUp);
-    this.root.addEventListener('mousemove', this.onMouseMove); this.root.addEventListener('mousedown', this.onMouseDown); window.addEventListener('mouseup', this.onMouseUp);
-    document.addEventListener('pointerlockchange', this.onLockChange); this.root.addEventListener('wheel', this.onWheel, { passive: true });
-    this.root.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.root.style.touchAction = 'none';
+    this.touch.attach(); this.desktop.attach();
+    if (this.local) this.touch.update(this.local);
+    this.setSettings(this.settings);
   }
   detach(): void {
     if (!this.attached) return; this.attached = false;
-    window.removeEventListener('keydown', this.onKeyDown); window.removeEventListener('keyup', this.onKeyUp);
-    this.root.removeEventListener('mousemove', this.onMouseMove); this.root.removeEventListener('mousedown', this.onMouseDown); window.removeEventListener('mouseup', this.onMouseUp);
-    document.removeEventListener('pointerlockchange', this.onLockChange); this.root.removeEventListener('wheel', this.onWheel);
-    this.keys.clear(); this.held = 0;
+    this.touch.detach(); this.desktop.detach(); this.gyro.stop();
+    this.latched = 0; this.pending.yaw = 0; this.pending.pitch = 0; this.dragged = false;
+    this.slot = 0; this.grenade = 0; this.buyItem = null; this.spectateDir = 0;
+    Object.assign(this.auto, createAutoState());
   }
+  get isAttached(): boolean { return this.attached; }
 }
 
 /** Replays a command log (golden tests, e2e). */
