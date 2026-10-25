@@ -218,6 +218,19 @@ describe('jump (impulse 6.0, gravity 20)', () => {
     run(DEPOT_WORLD, p, 90, (t) => ({ moveZ: 1, buttons: t === 0 ? Btn.JUMP : 0 }));
     expect(p.pos.y).toBe(0); expect(p.pos.x).toBeLessThanOrEqual(36 - 0.3 + 1e-3);
   });
+  it('a jump off the 1 m crate c at (18,16) never mounts the 2 m tall crate X at (18,14) (§3.3)', () => {
+    // the traced exploit: on c, facing north, holding forward, jump on tick 5 → used to land grounded on X at feet 2.0 m
+    const p = player(v3(37, 1, 32.4), NORTH, { grounded: true });
+    run(DEPOT_WORLD, p, 90, (t) => ({ moveZ: 1, buttons: t === 5 ? Btn.JUMP : 0 }));
+    expect(p.pos.y).toBeLessThan(1.5);
+    let best = 0;
+    for (const speed of [4.3, 5]) for (let z = 32.25; z <= 33.75 + 1e-9; z += 0.25) for (let jt = 0; jt < 20; jt += 2) {
+      const q = player(v3(37, 1, z), NORTH, { grounded: true });
+      const r = run(DEPOT_WORLD, q, 70, (t) => ({ moveZ: 1, buttons: t === jt ? Btn.JUMP : 0 }), speed);
+      for (const s of r.trace) if (s.grounded) best = Math.max(best, s.pos.y);
+    }
+    expect(best).toBe(1);
+  });
   it('an airborne step-up needs standing headroom: no crouch-mantling from an X top onto a 3 m wall under the 4.5 m ceiling', () => {
     const p = player(v3(36.35, 2, 29), WEST, { grounded: true, crouched: true, wantCrouch: true });   // on X (18,14), wall (17,14) to the west
     run(DEPOT_WORLD, p, 90, (t) => ({ moveZ: 1, buttons: Btn.CROUCH | (t === 0 ? Btn.JUMP : 0) }));

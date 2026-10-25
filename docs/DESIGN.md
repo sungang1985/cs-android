@@ -1568,7 +1568,7 @@ the shipped code deliberately deviates from the sections above, with the reason;
 |---|---|---|---|
 | §3.5 solids / walk grid | ≈ 110 solids, ≈ 1,150 nodes | 66 solids (walls merge into 27 boxes), 1,132 walkable sub-cells | wall merging is better than estimated; counts measured by `tests/unit/world` |
 | §6.4 route lengths | T→A 44 ± 5, CT→A 14 ± 3, A→B 31 ± 4 m | 39.3 / 14.2 / 29.1 m (T→B 43.5, CT→B 15.9) | measured over pulled corners on the real map |
-| §2.1 jump / crates | apex 0.90 m, 1 m crates mountable | exact 0.900 m; airborne step-up added so a standing jump mounts a crate; sandbags (1.2 m) are mountable too; wall/lintel/seal tops are never walkable | playability + no roof exploits |
+| §2.1 jump / crates | apex 0.90 m, 1 m crates mountable | exact 0.900 m; airborne step-up added so a standing jump mounts a crate; sandbags (1.2 m) are mountable too; wall/lintel/seal tops are never walkable; no step-up (grounded or airborne) ever lands on a 2 m tall-crate top, so a jump off a 1 m crate cannot mount one (§3.3) | playability + no roof exploits |
 | §3.4 low walls | "block crouched targets" | cover class: ≥ 1.8 m counts as full cover (the 1.9 m lip is full cover from Long) | matches the lip's purpose |
 | §4.1 penetration | AWP through `X` ×0.4; props ≤ 1.2 m thick | factor = min(weapon, prop); tall crates (2 m cubes) are penetrable by the AWP up to 3.0 m thickness | the 1.2 m rule would make the AWP exception meaningless |
 | §4.4 dry fire | — | dry fire never starts a reload in the sim; auto-reload is an input-layer setting (§7.5) | keeps the sim command-driven |
