@@ -105,7 +105,7 @@ npm run golden:update  # 玩法改动后更新黄金哈希（种子 42、14,400 
 npm run balance      # 机器人对战平衡统计（每档难度 N 场 5v5 全机器人爆破，默认 20 场）
 ```
 
-测试概况：约 50 个 vitest 文件、600+ 用例（纯模拟层 node 项目 + jsdom UI 项目），外加 9 个 Playwright 端到端场景：
+测试概况：约 55 个 vitest 文件、670+ 用例（纯模拟层 node 项目 + jsdom UI 项目），外加 9 个 Playwright 端到端场景：
 
 | 场景 | 覆盖 |
 |---|---|
