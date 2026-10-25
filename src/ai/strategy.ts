@@ -21,7 +21,7 @@ export const STRATEGY = {
   pA: 0.55, flipAfterLoss: 0.3, rushWaitSec: { easy: 10, normal: 4, hard: 0 } as Record<Difficulty, number>,
   pushAfterSec: 45, replanTicks: 60, campRange: [5, 7] as [number, number],
   /** CT rotation on lane sightings: ≥ laneSightEnemies distinct enemies seen (confidence 1) in one site's lanes within laneSightTicks. */
-  laneSightEnemies: 2, laneSightTicks: 180,
+  laneSightEnemies: 2, laneSightTicks: 300,
 } as const;
 
 type Site = 'a' | 'b';
