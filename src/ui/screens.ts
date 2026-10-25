@@ -6,6 +6,7 @@
  * forwards snapshots/events: live scoreboard, onboarding progress) and the orientation gate (re-checked on resize).
  */
 import type { EventBus } from '../core/events';
+import type { Vec3 } from '../core/math';
 import type { RenderSnapshot } from '../sim/state';
 import type { SimEnvelope } from '../sim/events';
 import { cloneSettings, cloneLayout, DEFAULT_SETTINGS, DEFAULT_LAYOUT } from '../settings/types';
@@ -125,6 +126,9 @@ export class Screens implements ScreensPeer {
     this.flow.enter(n);
     this.renderOnboarding();
   }
+
+  /** The move-step marker (default: depot.training.onboardingCell → (11, 0, 5)); the app may pass map.training.onboardingPos. */
+  setOnboardingTarget(p: Vec3): void { this.flow.target = { x: p.x, y: p.y, z: p.z }; }
 
   // ───────── fed by the Hud (snapshots at 20 Hz, drained events) ─────────
   feedSnapshot(next: RenderSnapshot): void {
